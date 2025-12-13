@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { env } from "@/lib/env";
 
 /**
  * Server-side API route for uploading images to Supabase Storage.
@@ -11,11 +12,11 @@ import { createClient } from "@supabase/supabase-js";
  */
 export async function POST(request: NextRequest) {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const supabaseUrl = env.supabaseUrl;
+    const supabaseServiceKey = env.supabaseServiceRoleKey || env.supabaseAnonKey;
 
-    if (!supabaseUrl || !supabaseServiceKey) {
-      console.error("[upload-image] Missing Supabase credentials");
+    if (!supabaseServiceKey) {
+      console.error("[upload-image] Missing Supabase service key");
       return NextResponse.json(
         { ok: false, message: "Server configuration error: Missing Supabase credentials" },
         { status: 500 }
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Log which key is being used (for debugging)
-    const isServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const isServiceRole = env.isServiceRoleConfigured;
     console.log("[upload-image] Using key type:", isServiceRole ? "SERVICE_ROLE_KEY" : "ANON_KEY");
     
     if (!isServiceRole) {

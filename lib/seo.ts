@@ -3,6 +3,9 @@ import { Metadata } from "next";
 const siteName = "Fort Dodge Islamic Center";
 const siteDescription =
   "Fort Dodge Islamic Center - Serving the Muslim community in Fort Dodge, Iowa with prayer services, educational programs, community support, and Islamic guidance since 2002.";
+
+// Use process.env directly with fallback to avoid module load issues during build
+// The env validation in validate-env.ts will catch missing vars at runtime
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://arqum.org";
 const siteImage = `${siteUrl}/images/fortlogos.png`;
 

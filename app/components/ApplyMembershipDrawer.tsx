@@ -1,34 +1,109 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { toast } from "./Toaster";
 
 interface ApplyMembershipDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  header?: { title?: string; description?: string } | null;
 }
 
-const overview = [
+// In-memory client-side cache and subscription for membership content.
+// This ensures we fetch from the API only once and then listen for
+// Supabase realtime updates to refresh the cache when the data changes.
+let membershipCache: any = null;
+let membershipFetchPromise: Promise<any> | null = null;
+const membershipSubscribers = new Set<(data: any) => void>();
+let membershipChannel: any = null;
+
+async function fetchMembershipCached(force = false) {
+  if (membershipCache && !force) return membershipCache;
+  if (membershipFetchPromise && !force) return membershipFetchPromise;
+
+  membershipFetchPromise = (async () => {
+    const res = await fetch('/api/apply-membership', { cache: 'no-store' });
+    if (!res.ok) throw new Error('Failed to fetch membership');
+    const json = await res.json();
+    if (!json.ok || !json.applyMembership?.data) {
+      membershipCache = null;
+    } else {
+      // normalize shape used by the component
+      const data = json.applyMembership.data;
+      const src = data.data && typeof data.data === 'object' ? data.data : data;
+      membershipCache = src;
+    }
+
+    membershipFetchPromise = null;
+
+    // notify subscribers
+    membershipSubscribers.forEach((cb) => {
+      try { cb(membershipCache); } catch (e) { console.error(e); }
+    });
+
+    return membershipCache;
+  })();
+
+  return membershipFetchPromise;
+}
+
+function ensureMembershipRealtimeSubscription() {
+  if (membershipChannel) return;
+
+  membershipChannel = supabase
+    .channel('membership-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'Home', filter: "page_name=eq.apply-membership" },
+      async (payload: any) => {
+        console.log('[ApplyMembershipDrawer] Supabase change payload:', payload);
+        try {
+          await fetchMembershipCached(true); // force refresh cache
+        } catch (err) {
+          console.error('[ApplyMembershipDrawer] Failed to refresh membership cache after change:', err);
+        }
+      }
+    )
+    .subscribe();
+}
+
+function subscribeToMembershipCache(cb: (data: any) => void) {
+  membershipSubscribers.add(cb);
+  // ensure the realtime subscription is active when there is at least one subscriber
+  ensureMembershipRealtimeSubscription();
+  return () => {
+    membershipSubscribers.delete(cb);
+    if (membershipSubscribers.size === 0 && membershipChannel) {
+      supabase.removeChannel(membershipChannel);
+      membershipChannel = null;
+    }
+  };
+}
+
+// Default values as fallback
+const DEFAULT_OVERVIEW = [
   "Fort Dodge Islamic Center offers two types of membership: paid full membership and associate membership.",
   "Paid full members have the right to vote in General Assembly elections and are eligible to serve on the Board of Directors. The annual membership fee is $30 and applies to members of the General Membership.",
-  "Associate members do not have voting privileges, but they are still entitled to all other benefits of membership, such as access to the Center’s facilities and programs.",
+  "Associate members do not have voting privileges, but they are still entitled to all other benefits of membership, such as access to the Center's facilities and programs.",
   "Please complete this form to establish or renew your membership at Fort Dodge Islamic Center. If you have any questions, please email membership@darularqam.org.",
 ];
 
-const membershipHighlights = [
+const DEFAULT_HIGHLIGHTS = [
   "Voting eligibility",
   "Facility access",
   "Community updates",
 ];
 
-const instructions = [
+const DEFAULT_INSTRUCTIONS = [
   "Complete all required parts clearly.",
   "Submit the form.",
   "The fee for full membership is $30 per person per year. There is no fee for associate membership.",
   "Select the method of payment: debit or credit card through our website, MOHID, or by submitting the fees into the donation box.",
 ];
 
-const paymentOptions = [
+const DEFAULT_PAYMENT_OPTIONS = [
   {
     label: "Donate Portal",
     description: "Use the Arqum donate page for debit/credit payments.",
@@ -43,48 +118,197 @@ const paymentOptions = [
   },
 ];
 
+// Helper function to extract data from cache
+function extractMembershipData(src: any) {
+  const result = {
+    header: null as { title?: string; description?: string } | null,
+    overview: DEFAULT_OVERVIEW,
+    highlights: DEFAULT_HIGHLIGHTS,
+    instructions: DEFAULT_INSTRUCTIONS,
+    donateLink: "/donate",
+    mohidLink: "https://us.mohid.co/tx/dallas/daic/masjid/online/donation",
+    mailingListNote: "Once your application is processed, we will add your email to our members mailing list.",
+    googleFormUrl: "https://docs.google.com/forms/d/e/1FAIpQLSddImQS6sjm5dzc-IR4Gxj1Po8iMW9tut0ae6ddxp-DkVh2mQ/viewform",
+  };
+
+  if (!src) return result;
+
+  // Extract header
+  if (src.header?.data) {
+    const headerData = src.header.data as any;
+    const title = headerData['drawer-title'] || headerData.drawerTitle || undefined;
+    const description = headerData['drawer-subtitle'] || headerData.drawerSubtitle || undefined;
+    result.header = { title, description };
+  }
+
+  // Extract content
+  const contentData = src.content?.data || {};
+  
+  // Overview paragraphs
+  if (Array.isArray(contentData.overview) && contentData.overview.length > 0) {
+    result.overview = contentData.overview.map((item: any) => 
+      typeof item === 'string' ? item : item.text || ''
+    ).filter(Boolean);
+  }
+
+  // Highlights
+  if (Array.isArray(contentData.highlights) && contentData.highlights.length > 0) {
+    result.highlights = contentData.highlights.map((item: any) => 
+      typeof item === 'string' ? item : item.text || ''
+    ).filter(Boolean);
+  }
+
+  // Instructions
+  if (Array.isArray(contentData.instructions) && contentData.instructions.length > 0) {
+    result.instructions = contentData.instructions.map((item: any) => 
+      typeof item === 'string' ? item : item.text || ''
+    ).filter(Boolean);
+  }
+
+  // Other fields
+  if (contentData['donate-link'] || contentData.donateLink) {
+    result.donateLink = contentData['donate-link'] || contentData.donateLink;
+  }
+  if (contentData['mohid-link'] || contentData.mohidLink) {
+    result.mohidLink = contentData['mohid-link'] || contentData.mohidLink;
+  }
+  if (contentData['mailing-list-note'] || contentData.mailingListNote) {
+    result.mailingListNote = contentData['mailing-list-note'] || contentData.mailingListNote;
+  }
+  if (contentData['google-form-url'] || contentData.googleFormUrl) {
+    result.googleFormUrl = contentData['google-form-url'] || contentData.googleFormUrl;
+  }
+
+  return result;
+}
+
 export default function ApplyMembershipDrawer({
   isOpen,
   onClose,
+  header,
 }: ApplyMembershipDrawerProps) {
-  const handleFormSubmit = (event: FormEvent<HTMLFormElement>) => {
+  // Initialize state from cache if available, otherwise use defaults
+  const cachedData = membershipCache ? extractMembershipData(membershipCache) : null;
+  
+  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(
+    cachedData?.header || null
+  );
+  const [overview, setOverview] = useState<string[]>(cachedData?.overview || DEFAULT_OVERVIEW);
+  const [highlights, setHighlights] = useState<string[]>(cachedData?.highlights || DEFAULT_HIGHLIGHTS);
+  const [instructions, setInstructions] = useState<string[]>(cachedData?.instructions || DEFAULT_INSTRUCTIONS);
+  const [donateLink, setDonateLink] = useState(cachedData?.donateLink || "/donate");
+  const [mohidLink, setMohidLink] = useState(cachedData?.mohidLink || "https://us.mohid.co/tx/dallas/daic/masjid/online/donation");
+  const [mailingListNote, setMailingListNote] = useState(cachedData?.mailingListNote || "Once your application is processed, we will add your email to our members mailing list.");
+  const [googleFormUrl, setGoogleFormUrl] = useState(cachedData?.googleFormUrl || "https://docs.google.com/forms/d/e/1FAIpQLSddImQS6sjm5dzc-IR4Gxj1Po8iMW9tut0ae6ddxp-DkVh2mQ/viewform");
+
+  // Don't pre-fetch on mount - only fetch when drawer opens
+
+  // Update state when drawer opens or cache changes
+  useEffect(() => {
+    let mounted = true;
+
+    const applySrcToState = (src: any) => {
+      if (!src || !mounted) return;
+      const extracted = extractMembershipData(src);
+      
+      if (mounted) {
+        if (extracted.header) setLocalHeader(extracted.header);
+        setOverview(extracted.overview);
+        setHighlights(extracted.highlights);
+        setInstructions(extracted.instructions);
+        setDonateLink(extracted.donateLink);
+        setMohidLink(extracted.mohidLink);
+        setMailingListNote(extracted.mailingListNote);
+        setGoogleFormUrl(extracted.googleFormUrl);
+      }
+    };
+
+    // Subscribe to cache updates so we update only when cache changes.
+    const unsubscribe = subscribeToMembershipCache((data) => {
+      if (!data) return;
+      applySrcToState(data);
+    });
+
+    // If drawer is open, populate immediately from cache (synchronously if available)
+    if (isOpen) {
+      // Check cache synchronously first for instant display
+      if (membershipCache) {
+        applySrcToState(membershipCache);
+      }
+      // Also fetch to ensure we have the latest data (will use cache if available)
+      fetchMembershipCached().then((data) => {
+        if (mounted && data) applySrcToState(data);
+      }).catch((err) => console.error('[ApplyMembershipDrawer] fetchMembershipCached error:', err));
+    }
+
+    return () => { mounted = false; unsubscribe(); };
+  }, [isOpen]);
+
+  // Always use localHeader from the new API, fallback to header prop if not available
+  const effectiveHeader = localHeader || header;
+  const handleFormSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    window.open(
-      "https://docs.google.com/forms/d/e/1FAIpQLSddImQS6sjm5dzc-IR4Gxj1Po8iMW9tut0ae6ddxp-DkVh2mQ/viewform",
-      "_blank",
-      "noopener,noreferrer"
-    );
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form).entries());
+
+    try {
+      const res = await fetch(`/api/send-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          formName: "Membership Application",
+          subject: `Membership: ${data["fullName"] || "(no name)"}`,
+          text: Object.entries(data)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join("\n"),
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to send message");
+
+      // Show success message
+      toast.success("Thank you! Your membership application has been submitted successfully.");
+
+      form.reset();
+      onClose();
+    } catch (err: any) {
+      console.error(err);
+      toast.error("There was an error submitting the membership form. Please try again later.");
+    }
   };
 
   return (
     <>
       <div
-        className={`fixed inset-0 z-[60] bg-black/40 transition-opacity duration-300 ${
-          isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-        }`}
+        className={`fixed inset-0 z-60 bg-black/40 transition-opacity duration-300 ${isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          }`}
         aria-hidden="true"
         onClick={onClose}
       />
 
       <aside
-        className={`fixed top-0 right-0 z-[70] flex h-full w-full max-w-2xl flex-col bg-white transition-transform duration-300 ease-in-out ${
-          isOpen ? "translate-x-0 shadow-2xl" : "translate-x-full shadow-none"
-        }`}
+        className={`fixed top-0 right-0 z-70 flex h-full w-full max-w-2xl flex-col bg-white transition-transform duration-300 ease-in-out ${isOpen ? "translate-x-0 shadow-2xl" : "translate-x-full shadow-none"
+          }`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="membership-drawer-title"
       >
-        <header className="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
+        <header className="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
           <div className="max-w-xl">
-            <h2
-              id="membership-drawer-title"
-              className="text-xl font-semibold tracking-tight"
-            >
-              Fort Dodge Islamic Center Membership Application Form
+            <h2 id="membership-drawer-title" className="text-xl font-semibold tracking-tight">
+              {effectiveHeader?.title ?? "Fort Dodge Islamic Center Membership Application Form"}
             </h2>
-            <p className="mt-1 text-sm text-white/80">
-              Submit the quick intake below and finish the official Google Form in the next step.
-            </p>
+            {effectiveHeader?.description ? (
+              <p 
+                className="mt-1 text-sm text-white/80"
+                dangerouslySetInnerHTML={{ __html: effectiveHeader.description }}
+              />
+            ) : (
+              <p className="mt-1 text-sm text-white/80">
+                Submit the quick intake below and finish the official Google Form in the next step.
+              </p>
+            )}
           </div>
 
           <button
@@ -118,7 +342,7 @@ export default function ApplyMembershipDrawer({
             ))}
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            {membershipHighlights.map((item) => (
+            {highlights.map((item) => (
               <span
                 key={item}
                 className="rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-800"
@@ -128,7 +352,7 @@ export default function ApplyMembershipDrawer({
             ))}
           </div>
 
-          <div className="mt-6 rounded-2xl border border-sky-100 bg-gradient-to-br from-white to-sky-50 p-5">
+          <div className="mt-6 rounded-2xl border border-sky-100 bg-linear-to-br from-white to-sky-50 p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">
               Instructions
             </p>
@@ -142,28 +366,28 @@ export default function ApplyMembershipDrawer({
               <li className="flex flex-col gap-1 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
                 <span className="font-semibold text-gray-900">Online link:</span>
                 <Link
-                  href="/donate"
+                  href={donateLink}
                   target="_blank"
                   rel="noreferrer"
                   className="break-all text-sky-700 underline underline-offset-2"
                 >
-                  https://www.arqum.org/donate
+                  {donateLink.startsWith('http') ? donateLink : `https://www.arqum.org${donateLink}`}
                 </Link>
               </li>
               <li className="flex flex-col gap-1 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
                 <span className="font-semibold text-gray-900">MOHID link:</span>
                 <Link
-                  href="https://us.mohid.co/tx/dallas/daic/masjid/online/donation"
+                  href={mohidLink}
                   target="_blank"
                   rel="noreferrer"
                   className="break-all text-sky-700 underline underline-offset-2"
                 >
-                  https://us.mohid.co/tx/dallas/daic/masjid/online/donation
+                  {mohidLink}
                 </Link>
               </li>
             </ul>
             <p className="mt-4 text-xs uppercase tracking-[0.2em] text-gray-500">
-              Once your application is processed, we will add your email to our members mailing list.
+              {mailingListNote}
             </p>
           </div>
 

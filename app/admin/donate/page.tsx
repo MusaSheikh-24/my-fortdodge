@@ -5,6 +5,7 @@ import PageEditorLayout from "../components/PageEditorLayout";
 import SectionEditor from "../components/SectionEditor";
 import VisibilityToggle from "../components/VisibilityToggle";
 import { SectionField } from "@/lib/home-default-sections";
+import { toast } from "@/app/components/Toaster";
 
 export default function DonatePageEditor() {
   const [sections, setSections] = useState<Record<string, SectionField[]>>({
@@ -355,13 +356,13 @@ export default function DonatePageEditor() {
       const result = await response.json();
 
       if (result.ok) {
-        alert(`${getSectionTitle(sectionId)} saved successfully!`);
+        toast.success(`${getSectionTitle(sectionId)} saved successfully!`);
         window.location.reload();
       } else {
-        alert(result.message || "Failed to save");
+        toast.error(result.message || "Failed to save");
       }
     } catch (error: any) {
-      alert(error?.message || "Failed to save");
+      toast.error(error?.message || "Failed to save");
     } finally {
       setSaving((prev) => ({ ...prev, [sectionId]: false }));
     }

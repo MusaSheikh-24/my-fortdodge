@@ -3,6 +3,9 @@ import { supabase } from "@/lib/supabase";
 
 const HOME_TABLE = "Home";
 
+// Force dynamic rendering for real-time visibility updates
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/page-visibility
  * Get visibility status for all pages at once
@@ -66,10 +69,17 @@ export async function GET() {
       });
     }
 
-    return NextResponse.json({
-      ok: true,
-      visibility,
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        visibility,
+      },
+      {
+        headers: {
+          'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
+        },
+      }
+    );
   } catch (error: any) {
     console.error("[page-visibility] Error:", error);
     return NextResponse.json(

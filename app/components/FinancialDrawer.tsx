@@ -1,18 +1,93 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { toast } from "./Toaster";
 
 interface FinancialDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  header?: { title?: string; description?: string } | null;
 }
 
-const overview = [
+// In-memory client-side cache and subscription for financial assistance content.
+// This ensures we fetch from the API only once and then listen for
+// Supabase realtime updates to refresh the cache when the data changes.
+let financialCache: any = null;
+let financialFetchPromise: Promise<any> | null = null;
+const financialSubscribers = new Set<(data: any) => void>();
+let financialChannel: any = null;
+
+async function fetchFinancialCached(force = false) {
+  if (financialCache && !force) return financialCache;
+  if (financialFetchPromise && !force) return financialFetchPromise;
+
+  financialFetchPromise = (async () => {
+    const res = await fetch('/api/financial-assistance', { cache: 'no-store' });
+    if (!res.ok) throw new Error('Failed to fetch financial assistance');
+    const json = await res.json();
+    if (!json.ok || !json.financialAssistance?.data) {
+      financialCache = null;
+    } else {
+      // normalize shape used by the component
+      const data = json.financialAssistance.data;
+      const src = data.data && typeof data.data === 'object' ? data.data : data;
+      financialCache = src;
+    }
+
+    financialFetchPromise = null;
+
+    // notify subscribers
+    financialSubscribers.forEach((cb) => {
+      try { cb(financialCache); } catch (e) { console.error(e); }
+    });
+
+    return financialCache;
+  })();
+
+  return financialFetchPromise;
+}
+
+function ensureFinancialRealtimeSubscription() {
+  if (financialChannel) return;
+
+  financialChannel = supabase
+    .channel('financial-changes')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'Home', filter: "page_name=eq.financial-assistance" },
+      async (payload: any) => {
+        console.log('[FinancialDrawer] Supabase change payload:', payload);
+        try {
+          await fetchFinancialCached(true); // force refresh cache
+        } catch (err) {
+          console.error('[FinancialDrawer] Failed to refresh financial cache after change:', err);
+        }
+      }
+    )
+    .subscribe();
+}
+
+function subscribeToFinancialCache(cb: (data: any) => void) {
+  financialSubscribers.add(cb);
+  // ensure the realtime subscription is active when there is at least one subscriber
+  ensureFinancialRealtimeSubscription();
+  return () => {
+    financialSubscribers.delete(cb);
+    if (financialSubscribers.size === 0 && financialChannel) {
+      supabase.removeChannel(financialChannel);
+      financialChannel = null;
+    }
+  };
+}
+
+// Default values as fallback
+const DEFAULT_OVERVIEW = [
   "The aim of the financial assistance program is to provide short-term financial aid to community members experiencing hardship. This support is made possible through Zakat, Sadaqa, and Fitra contributions.",
 ];
 
-const howToApply = [
+const DEFAULT_HOW_TO_APPLY = [
   {
     title: "Online Application",
     description:
@@ -38,47 +113,230 @@ const maritalStatusOptions = ["Married", "Single", "Divorced", "Widowed"];
 
 const frequencyScale = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
-const financialFormUrl = "https://forms.gle/financial-assistance";
+const DEFAULT_FINANCIAL_FORM_URL = "https://forms.gle/financial-assistance";
+const DEFAULT_HELP_EMAIL = "treasurer@arqum.org";
+const DEFAULT_WEBSITE_URL = "https://arqum.org";
+
+// Helper function to extract data from cache (no defaults - only returns what's in database)
+function extractFinancialData(src: any) {
+  const result = {
+    header: null as { title?: string; description?: string } | null,
+    overview: [] as string[],
+    howToApply: [] as any[],
+    financialFormUrl: "",
+    helpEmail: "",
+    websiteUrl: "",
+  };
+
+  if (!src) return result;
+
+  // Extract header
+  if (src.header?.data) {
+    const headerData = src.header.data as any;
+    const title = headerData['drawer-title'] || headerData.drawerTitle || undefined;
+    const description = headerData['drawer-subtitle'] || headerData.drawerSubtitle || undefined;
+    result.header = { title, description };
+  }
+
+  // Extract content
+  const contentData = src.content?.data || {};
+  
+  // Overview paragraphs
+  if (Array.isArray(contentData.overview) && contentData.overview.length > 0) {
+    result.overview = contentData.overview.map((item: any) => 
+      typeof item === 'string' ? item : item.text || ''
+    ).filter(Boolean);
+  }
+
+  // How to apply (support both camelCase and kebab-case)
+  const howToApplyData = contentData.howToApply || contentData['how-to-apply'];
+  if (Array.isArray(howToApplyData) && howToApplyData.length > 0) {
+    result.howToApply = howToApplyData.map((item: any) => {
+      if (typeof item === 'string') {
+        return { title: item, description: '' };
+      }
+      // Handle bullets - can be array, newline-separated string, or empty
+      let bullets: string[] | undefined = undefined;
+      if (item.bullets) {
+        if (Array.isArray(item.bullets)) {
+          bullets = item.bullets.filter((b: any) => b && b.trim());
+        } else if (typeof item.bullets === 'string' && item.bullets.trim()) {
+          bullets = item.bullets.split('\n').filter((b: string) => b.trim());
+        }
+      }
+      return {
+        title: item.title || item['title'] || '',
+        description: item.description || item['description'] || '',
+        bullets: bullets && bullets.length > 0 ? bullets : undefined,
+      };
+    }).filter((item: any) => item.title);
+  }
+
+  // Other fields - only set if they exist in database
+  if (contentData['financial-form-url'] || contentData.financialFormUrl) {
+    result.financialFormUrl = contentData['financial-form-url'] || contentData.financialFormUrl || "";
+  }
+  if (contentData['help-email'] || contentData.helpEmail) {
+    result.helpEmail = contentData['help-email'] || contentData.helpEmail || "";
+  }
+  if (contentData['website-url'] || contentData.websiteUrl) {
+    result.websiteUrl = contentData['website-url'] || contentData.websiteUrl || "";
+  }
+
+  return result;
+}
 
 export default function FinancialDrawer({
   isOpen,
   onClose,
+  header,
 }: FinancialDrawerProps) {
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  // Don't initialize with defaults - wait for data from database
+  // Initialize from cache if available for instant display
+  const cachedData = financialCache ? extractFinancialData(financialCache) : null;
+  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(
+    cachedData?.header || null
+  );
+  const [overview, setOverview] = useState<string[]>([]);
+  const [howToApply, setHowToApply] = useState<any[]>([]);
+  const [financialFormUrl, setFinancialFormUrl] = useState<string>("");
+  const [helpEmail, setHelpEmail] = useState<string>("");
+  const [websiteUrl, setWebsiteUrl] = useState<string>("");
+  const [dataLoaded, setDataLoaded] = useState(false);
+
+  // Always fetch from database - never use static defaults
+  const applySrcToState = (src: any, useDefaults: boolean = false) => {
+    if (!src && !useDefaults) return;
+    const extracted = extractFinancialData(src || null);
+    
+    // Always update header from database
+    console.log('[FinancialDrawer] Updating header:', { 
+      hasSrc: !!src, 
+      hasHeaderData: !!src?.header?.data,
+      extractedHeader: extracted.header 
+    });
+    
+    // Update header state - always set to extracted value (even if null)
+    setLocalHeader(extracted.header);
+    setOverview(extracted.overview.length > 0 ? extracted.overview : (useDefaults ? DEFAULT_OVERVIEW : []));
+    setHowToApply(extracted.howToApply.length > 0 ? extracted.howToApply : (useDefaults ? DEFAULT_HOW_TO_APPLY : []));
+    setFinancialFormUrl(extracted.financialFormUrl || (useDefaults ? DEFAULT_FINANCIAL_FORM_URL : ""));
+    setHelpEmail(extracted.helpEmail || (useDefaults ? DEFAULT_HELP_EMAIL : ""));
+    setWebsiteUrl(extracted.websiteUrl || (useDefaults ? DEFAULT_WEBSITE_URL : ""));
+    setDataLoaded(true);
+  };
+
+  // Set up subscription (only subscribe, don't fetch on mount)
+  useEffect(() => {
+    let mounted = true;
+
+    // Subscribe to cache updates so we update when cache changes (even when drawer is closed)
+    const unsubscribe = subscribeToFinancialCache((data) => {
+      if (!mounted) return;
+      if (data) {
+        applySrcToState(data, false);
+      }
+    });
+
+    return () => { mounted = false; unsubscribe(); };
+  }, []);
+
+  // Always fetch fresh data when drawer opens
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    let mounted = true;
+
+    // Always force fetch fresh data from database when drawer opens
+    fetchFinancialCached(true).then((data) => {
+      if (mounted) {
+        if (data) {
+          applySrcToState(data, false);
+        } else {
+          applySrcToState(null, true);
+        }
+      }
+    }).catch((err) => {
+      console.error('[FinancialDrawer] fetchFinancialCached error:', err);
+      if (mounted) {
+        applySrcToState(null, true);
+      }
+    });
+
+    return () => { mounted = false; };
+  }, [isOpen]);
+
+  // Always use localHeader from database if available, only fallback to header prop if localHeader is null
+  const effectiveHeader = localHeader || header;
+  
+  // Use defaults only if no data loaded and API failed/returned empty
+  const displayOverview = dataLoaded ? (overview.length > 0 ? overview : DEFAULT_OVERVIEW) : (overview.length > 0 ? overview : []);
+  const displayHowToApply = dataLoaded ? (howToApply.length > 0 ? howToApply : DEFAULT_HOW_TO_APPLY) : (howToApply.length > 0 ? howToApply : []);
+  const displayFinancialFormUrl = financialFormUrl || DEFAULT_FINANCIAL_FORM_URL;
+  const displayHelpEmail = helpEmail || DEFAULT_HELP_EMAIL;
+  const displayWebsiteUrl = websiteUrl || DEFAULT_WEBSITE_URL;
+  
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    window.open(financialFormUrl, "_blank", "noopener,noreferrer");
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form).entries());
+
+    try {
+      const res = await fetch(`/api/send-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          formName: "Financial Assistance",
+          subject: `Financial assistance: ${data["applicantName"] || "(no name)"}`,
+          text: Object.entries(data)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join("\n"),
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to send message");
+
+      toast.success("Your financial assistance application has been submitted. We will contact you by email.");
+      form.reset();
+      onClose();
+    } catch (err: any) {
+      console.error(err);
+      toast.error("There was an error submitting your application. Please try again later.");
+    }
   };
 
   return (
     <>
       <div
-        className={`fixed inset-0 z-[60] bg-black/40 transition-opacity duration-300 ${
-          isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-        }`}
+        className={`fixed inset-0 z-60 bg-black/40 transition-opacity duration-300 ${isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+          }`}
         aria-hidden="true"
         onClick={onClose}
       />
 
       <aside
-        className={`fixed top-0 right-0 z-[70] flex h-full w-full max-w-2xl flex-col bg-white transition-transform duration-300 ease-in-out ${
-          isOpen ? "translate-x-0 shadow-2xl" : "translate-x-full shadow-none"
-        }`}
+        className={`fixed top-0 right-0 z-70 flex h-full w-full max-w-2xl flex-col bg-white transition-transform duration-300 ease-in-out ${isOpen ? "translate-x-0 shadow-2xl" : "translate-x-full shadow-none"
+          }`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="financial-drawer-title"
       >
-        <header className="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
+        <header className="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
           <div className="max-w-xl">
-            <h2
-              id="financial-drawer-title"
-              className="text-xl font-semibold tracking-tight"
-            >
-              Fort Dodge Islamic Center Financial Assistance Form
+            <h2 id="financial-drawer-title" className="text-xl font-semibold tracking-tight">
+              {effectiveHeader?.title ?? "Fort Dodge Islamic Center Financial Assistance Form"}
             </h2>
-            <p className="mt-1 text-sm text-white/80">
-              Share your information below. You will finish the official Google Form in the next
-              step.
-            </p>
+            {effectiveHeader?.description ? (
+              <p 
+                className="mt-1 text-sm text-white/80"
+                dangerouslySetInnerHTML={{ __html: effectiveHeader.description }}
+              />
+            ) : (
+              <p className="mt-1 text-sm text-white/80">
+                Share your information below. You will finish the official Google Form in the next step.
+              </p>
+            )}
           </div>
 
           <button
@@ -104,48 +362,69 @@ export default function FinancialDrawer({
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 pb-7 pt-6">
-          <div className="space-y-4">
-            {overview.map((text) => (
-              <p key={text} className="text-sm leading-relaxed text-gray-700">
-                {text}
-              </p>
-            ))}
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-sky-100 bg-gradient-to-br from-white to-sky-50 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">
-              How to apply
-            </p>
-            <div className="mt-3 space-y-4 text-sm text-gray-700">
-              {howToApply.map((item) => (
-                <div key={item.title} className="rounded-xl bg-white/80 p-4 shadow-sm">
-                  <p className="font-semibold text-gray-900">{item.title}</p>
-                  <p className="mt-2">{item.description}</p>
-                  {item.bullets && (
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-gray-700">
-                      {item.bullets.map((bullet) => (
-                        <li key={bullet}>{bullet}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))}
+          {!dataLoaded && displayOverview.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-600">Loading...</p>
             </div>
-            <p className="mt-4 text-xs uppercase tracking-[0.2em] text-gray-500">
-              For help, email{" "}
-              <Link
-                href="mailto:treasurer@arqum.org"
-                className="text-sky-700 underline underline-offset-2"
-              >
-                treasurer@arqum.org
-              </Link>{" "}
-              or visit our{" "}
-              <Link href="https://arqum.org" className="text-sky-700 underline underline-offset-2">
-                website
-              </Link>
-              . Your privacy will be respected at every step.
-            </p>
-          </div>
+          ) : (
+            <>
+              <div className="space-y-4">
+                {displayOverview.length > 0 ? (
+                  displayOverview.map((text, index) => (
+                    <div 
+                      key={index} 
+                      className="text-sm leading-relaxed text-gray-700 prose prose-sm max-w-none [&_*]:max-w-full [&_strong]:font-semibold [&_em]:italic [&_a]:text-sky-700 [&_a]:underline"
+                      dangerouslySetInnerHTML={{ __html: text || '' }}
+                    />
+                  ))
+                ) : (
+                  <p className="text-sm text-gray-500 italic">No overview content available.</p>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl border border-sky-100 bg-linear-to-br from-white to-sky-50 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">
+                  How to apply
+                </p>
+                <div className="mt-3 space-y-4 text-sm text-gray-700">
+                  {displayHowToApply.map((item, index) => (
+                    <div key={item.title || index} className="rounded-xl bg-white/80 p-4 shadow-sm">
+                      <p className="font-semibold text-gray-900">{item.title}</p>
+                      {item.description ? (
+                        <div 
+                          className="mt-2 prose prose-sm max-w-none [&_*]:max-w-full [&_strong]:font-semibold [&_em]:italic [&_a]:text-sky-700 [&_a]:underline"
+                          dangerouslySetInnerHTML={{ __html: item.description }}
+                        />
+                      ) : (
+                        <p className="mt-2 text-sm text-gray-500 italic">No description available.</p>
+                      )}
+                      {item.bullets && Array.isArray(item.bullets) && item.bullets.length > 0 && (
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-gray-700">
+                          {item.bullets.map((bullet: string, bulletIndex: number) => (
+                            <li key={bulletIndex}>{bullet}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-4 text-xs uppercase tracking-[0.2em] text-gray-500">
+                  For help, email{" "}
+                  <Link
+                    href={`mailto:${displayHelpEmail}`}
+                    className="text-sky-700 underline underline-offset-2"
+                  >
+                    {displayHelpEmail}
+                  </Link>{" "}
+                  or visit our{" "}
+                  <Link href={displayWebsiteUrl} className="text-sky-700 underline underline-offset-2">
+                    website
+                  </Link>
+                  . Your privacy will be respected at every step.
+                </p>
+              </div>
+            </>
+          )}
 
           <form
             id="financial-assistance-form"

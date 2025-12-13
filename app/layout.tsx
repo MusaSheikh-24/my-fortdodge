@@ -6,6 +6,9 @@ import {
   generateMetadata as generateSEOMetadata,
 } from "@/lib/seo";
 import StructuredData from "./components/StructuredData";
+import { ToastProvider } from "./components/Toaster";
+// Validate environment variables on app startup
+import "@/lib/validate-env";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -60,9 +63,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <StructuredData />
-        <PageLoader />
-        {children}
+        <ToastProvider>
+          <StructuredData />
+          <PageLoader />
+          {children}
+        </ToastProvider>
       </body>
     </html>
   );

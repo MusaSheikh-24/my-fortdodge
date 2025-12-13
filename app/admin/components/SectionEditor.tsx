@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import RichTextEditor from "./RichTextEditor";
 import { resolveStorageImageUrl } from "@/lib/storage.service";
+import { toast } from "@/app/components/Toaster";
 
 type SectionField = {
   id: string;
@@ -121,13 +122,13 @@ export default function SectionEditor({
     // Validate file size (max 5MB)
     const maxSize = 5 * 1024 * 1024; // 5MB in bytes
     if (file.size > maxSize) {
-      alert(`Image size is too large. Maximum size is 5MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
+      toast.error(`Image size is too large. Maximum size is 5MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
       return;
     }
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      alert("Please select a valid image file (JPG, PNG, WebP, etc.)");
+      toast.error("Please select a valid image file (JPG, PNG, WebP, etc.)");
       return;
     }
 
@@ -189,7 +190,7 @@ export default function SectionEditor({
           errorMessage += "\n\n⚠️ WARNING: Using ANON_KEY instead of SERVICE_ROLE_KEY. Add SUPABASE_SERVICE_ROLE_KEY to .env.local";
         }
         
-        alert(errorMessage);
+        toast.error(errorMessage);
         return;
       }
 
@@ -212,13 +213,13 @@ export default function SectionEditor({
         event.target.value = "";
       } else {
         console.error("[SectionEditor] Invalid image value from API:", storedValue);
-        alert("Error: Invalid image filename received from server. Please try uploading again.");
+        toast.error("Error: Invalid image filename received from server. Please try uploading again.");
         // Reset the file input on error too
         event.target.value = "";
       }
     } catch (err: any) {
       console.error("[SectionEditor] Unexpected upload error:", err);
-      alert(`Unexpected error while uploading image: ${err?.message || String(err)}\n\nCheck browser console for details.`);
+      toast.error(`Unexpected error while uploading image: ${err?.message || String(err)}. Check browser console for details.`);
       // Reset the file input on error
       event.target.value = "";
     }
@@ -245,13 +246,13 @@ export default function SectionEditor({
     // Validate file size (max 5MB)
     const maxSize = 5 * 1024 * 1024; // 5MB in bytes
     if (file.size > maxSize) {
-      alert(`Image size is too large. Maximum size is 5MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
+      toast.error(`Image size is too large. Maximum size is 5MB. Your file is ${(file.size / 1024 / 1024).toFixed(2)}MB.`);
       return;
     }
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      alert("Please select a valid image file (JPG, PNG, WebP, etc.)");
+      toast.error("Please select a valid image file (JPG, PNG, WebP, etc.)");
       return;
     }
 
@@ -317,7 +318,7 @@ export default function SectionEditor({
           errorMessage += "\n\n⚠️ WARNING: Using ANON_KEY instead of SERVICE_ROLE_KEY. Add SUPABASE_SERVICE_ROLE_KEY to .env.local";
         }
         
-        alert(errorMessage);
+        toast.error(errorMessage);
         return;
       }
 
@@ -339,13 +340,13 @@ export default function SectionEditor({
         event.target.value = "";
       } else {
         console.error("[SectionEditor] Invalid image value from API:", storedValue);
-        alert("Error: Invalid image filename received from server. Please try uploading again.");
+        toast.error("Error: Invalid image filename received from server. Please try uploading again.");
         // Reset the file input on error too
         event.target.value = "";
       }
     } catch (err: any) {
       console.error("[SectionEditor] Unexpected array item upload error:", err);
-      alert(`Unexpected error while uploading image: ${err?.message || String(err)}\n\nCheck browser console for details.`);
+      toast.error(`Unexpected error while uploading image: ${err?.message || String(err)}. Check browser console for details.`);
       // Reset the file input on error
       event.target.value = "";
     }
@@ -620,7 +621,18 @@ export default function SectionEditor({
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {field.arrayItemSchema?.map((schema) => (
-                          <div key={schema.id} className={schema.type === "image" ? "md:col-span-2" : ""}>
+                          <div 
+                            key={schema.id} 
+                            className={
+                              schema.type === "image" 
+                                ? "md:col-span-2" 
+                                : schema.type === "textarea" 
+                                  ? "md:col-span-2" 
+                                  : schema.type === "rich-text"
+                                    ? "md:col-span-2"
+                                    : ""
+                            }
+                          >
                             <label className="block text-xs font-medium text-gray-600 mb-1">
                               {schema.label}
                             </label>

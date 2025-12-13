@@ -5,6 +5,7 @@ import PageEditorLayout from "../components/PageEditorLayout";
 import SectionEditor from "../components/SectionEditor";
 import VisibilityToggle from "../components/VisibilityToggle";
 import { VisitorGuideSectionConfig } from "@/lib/visitor-guide.service";
+import { toast } from "@/app/components/Toaster";
 
 type SectionField = {
   id: string;
@@ -456,13 +457,13 @@ export default function VisitorsGuidePageEditor() {
       const result = await response.json();
 
       if (result.ok) {
-        alert(`${getSectionTitle(sectionId)} saved successfully!`);
+        toast.success(`${getSectionTitle(sectionId)} saved successfully!`);
         window.location.reload();
       } else {
-        alert(result.message || "Failed to save");
+        toast.error(result.message || "Failed to save");
       }
     } catch (error: any) {
-      alert(error?.message || "Failed to save");
+      toast.error(error?.message || "Failed to save");
     } finally {
       setSaving((prev) => ({ ...prev, [sectionId]: false }));
     }

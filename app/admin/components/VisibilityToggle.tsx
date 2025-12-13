@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { toast } from "@/app/components/Toaster";
 
 type VisibilityToggleProps = {
   pageName: string;
@@ -137,13 +138,13 @@ export default function VisibilityToggle({ pageName, apiEndpoint }: VisibilityTo
           // Keep the state we set above
         }
         
-        alert(`Page visibility updated successfully! The page will ${newVisibility ? 'appear' : 'not appear'} in the navbar.`);
+        toast.success(`Page visibility updated successfully! The page will ${newVisibility ? 'appear' : 'not appear'} in the navbar.`);
       } else {
         throw new Error(updateResult.message || "Failed to update");
       }
     } catch (error: any) {
       console.error(`Failed to update visibility for ${pageName}:`, error);
-      alert(`Failed to update visibility: ${error.message || "Unknown error"}`);
+      toast.error(`Failed to update visibility: ${error.message || "Unknown error"}`);
     } finally {
       setSaving(false);
     }

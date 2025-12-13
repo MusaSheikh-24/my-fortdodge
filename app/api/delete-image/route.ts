@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { env } from "@/lib/env";
 
 /**
  * Server-side API route for deleting images from Supabase Storage.
@@ -12,12 +13,10 @@ import { createClient } from "@supabase/supabase-js";
  */
 export async function POST(request: NextRequest) {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseServiceKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const supabaseUrl = env.supabaseUrl;
+    const supabaseServiceKey = env.supabaseServiceRoleKey || env.supabaseAnonKey;
 
-    if (!supabaseUrl || !supabaseServiceKey) {
+    if (!supabaseServiceKey) {
       console.error("[delete-image] Missing Supabase credentials");
       return NextResponse.json(
         {
@@ -28,7 +27,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const isServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const isServiceRole = env.isServiceRoleConfigured;
     console.log(
       "[delete-image] Using key type:",
       isServiceRole ? "SERVICE_ROLE_KEY" : "ANON_KEY"

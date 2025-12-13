@@ -28,13 +28,15 @@ const menuItems: MenuItem[] = [
       { label: "Islamic Prayer", href: "/admin/islamic-prayer" },
       { label: "Islamic School", href: "/admin/islamic-school" },
       { label: "Elections & Nominations", href: "/admin/elections-nominations" },
-      // { label: "Apply/Renew Membership", href: "/admin/apply-renew-membership" },
+      { label: "Apply/Renew Membership", href: "/admin/apply-renew-membership" },
       // { label: "By Laws", href: "/admin/by-laws" },
       // { label: "Fundraising Policy", href: "/admin/fundraising-policy" },
       // { label: "Meeting Minutes", href: "/admin/meeting-minutes" },
-      // { label: "Financial Assistance", href: "/admin/financial-assistance" },
-      // { label: "Request Door Access", href: "/admin/request-door-access" },
-      // { label: "Reserve Basement", href: "/admin/reserve-basement" },
+      { label: "Financial Assistance", href: "/admin/financial-assistance" },
+      { label: "Request Door Access", href: "/admin/request-door-access" },
+      { label: "Reserve Basement", href: "/admin/reserve-basement" },
+
+      { label: "Contact", href: "/admin/contact" },
     ],
   },
 ];
@@ -110,11 +112,10 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
               return (
                 <div key={item.label}>
                   <div
-                    className={`w-full flex items-center justify-between px-4 py-2.5 rounded-md transition-colors duration-200 relative ${
-                      active
-                        ? "bg-blue-100 text-sky-900 font-bold border-l-4 border-blue-600"
-                        : "text-sky-900 hover:bg-gray-100 font-semibold"
-                    }`}
+                    className={`w-full flex items-center justify-between px-4 py-2.5 rounded-md transition-colors duration-200 relative ${active
+                      ? "bg-blue-100 text-sky-900 font-bold border-l-4 border-blue-600"
+                      : "text-sky-900 hover:bg-gray-100 font-semibold"
+                      }`}
                   >
                     <Link href={item.href} className="flex-1 text-left">
                       {item.label}
@@ -143,11 +144,10 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
                           <Link
                             key={child.label}
                             href={child.href}
-                            className={`block px-4 py-2 rounded-md text-sm transition-colors duration-200 ${
-                              childActive
-                                ? "text-sky-900 font-semibold bg-blue-50"
-                                : "text-gray-700 hover:text-sky-900 hover:bg-gray-50"
-                            }`}
+                            className={`block px-4 py-2 rounded-md text-sm transition-colors duration-200 ${childActive
+                              ? "text-sky-900 font-semibold bg-blue-50"
+                              : "text-gray-700 hover:text-sky-900 hover:bg-gray-50"
+                              }`}
                           >
                             {child.label}
                           </Link>
@@ -163,11 +163,10 @@ export default function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
               <Link
                 key={item.label}
                 href={item.href}
-                className={`block px-4 py-2.5 rounded-md transition-colors duration-200 relative ${
-                  active
-                    ? "bg-blue-100 text-sky-900 font-bold border-l-4 border-blue-600"
-                    : "text-sky-900 hover:bg-gray-100 font-semibold"
-                }`}
+                className={`block px-4 py-2.5 rounded-md transition-colors duration-200 relative ${active
+                  ? "bg-blue-100 text-sky-900 font-bold border-l-4 border-blue-600"
+                  : "text-sky-900 hover:bg-gray-100 font-semibold"
+                  }`}
               >
                 {item.label}
               </Link>

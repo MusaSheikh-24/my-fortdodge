@@ -51,6 +51,8 @@ const defaultIconItems: InfoBannerIcon[] = [
 ];
 
 export default function InfoBanner({ data }: InfoBannerProps) {
+  const [resourcesData, setResourcesData] = useState<any | null>(null);
+  const [contactData, setContactData] = useState<any | null>(null);
   const [isMembershipDrawerOpen, setIsMembershipDrawerOpen] = useState(false);
   const [isContactDrawerOpen, setIsContactDrawerOpen] = useState(false);
   const [isReserveBasementDrawerOpen, setIsReserveBasementDrawerOpen] = useState(false);
@@ -112,13 +114,13 @@ export default function InfoBanner({ data }: InfoBannerProps) {
   // Normalize icons: use quickLinks if available, otherwise icons, otherwise defaults
   // IMPORTANT: Prefer `src` field over `iconPath` because `src` contains newly uploaded images
   // `iconPath` is the old format for manually added images
-  
+
   const icons = (
     data?.quickLinks && data.quickLinks.length
       ? data.quickLinks
       : data?.icons && data.icons.length
-      ? data.icons
-      : defaultIconItems
+        ? data.icons
+        : defaultIconItems
   ).map((item) => {
     // Map Supabase structure to component structure.
     // IMPORTANT: Prefer `src` (new uploaded images) over `iconPath` (old manually added images)
@@ -135,7 +137,7 @@ export default function InfoBanner({ data }: InfoBannerProps) {
   // Auto-detect drawer type from URL patterns if not explicitly set
   const iconsWithDrawers = icons.map((item) => {
     if (item.drawer) return item;
-    
+
     const href = item.href ?? "";
     if (href.includes("apply-renew-membership") || href.includes("membership")) {
       return { ...item, drawer: "membership" as const };
@@ -179,11 +181,11 @@ export default function InfoBanner({ data }: InfoBannerProps) {
             }
 
             const iconSrc = resolveStorageImageUrl(item.src, { bucket: "Public", folder: "Home" });
-            
-            console.log("[InfoBanner] Resolving icon:", { 
-              label: item.label, 
-              src: item.src, 
-              resolved: iconSrc 
+
+            console.log("[InfoBanner] Resolving icon:", {
+              label: item.label,
+              src: item.src,
+              resolved: iconSrc
             });
 
             // If we can't resolve a Supabase URL, skip rendering the icon image
@@ -218,14 +220,32 @@ export default function InfoBanner({ data }: InfoBannerProps) {
       <ApplyMembershipDrawer
         isOpen={isMembershipDrawerOpen}
         onClose={() => setIsMembershipDrawerOpen(false)}
+        header={{
+          title: resourcesData?.applyRenewMembership?.data?.title || resourcesData?.applyRenewMembership?.title || undefined,
+          description: resourcesData?.applyRenewMembership?.data?.description || resourcesData?.applyRenewMembership?.description || undefined,
+        }}
       />
       <ContactDrawer
         isOpen={isContactDrawerOpen}
         onClose={() => setIsContactDrawerOpen(false)}
+        methods={
+          contactData?.content?.data
+            ? [
+              contactData.content.data['contact-facebook'] && { label: 'Facebook', href: contactData.content.data['contact-facebook'], external: true },
+              contactData.content.data['contact-whatsapp'] && { label: 'WhatsApp', href: contactData.content.data['contact-whatsapp'], external: true },
+              contactData.content.data['contact-email'] && { label: 'Email', href: `mailto:${contactData.content.data['contact-email']}`, external: false },
+              contactData.content.data['contact-voicemail'] && { label: 'Voicemail', href: `tel:${contactData.content.data['contact-voicemail'].replace(/[^0-9+]/g, '')}`, external: false, display: contactData.content.data['contact-voicemail'] },
+            ].filter(Boolean)
+            : undefined
+        }
       />
       <ReserveBasementDrawer
         isOpen={isReserveBasementDrawerOpen}
         onClose={() => setIsReserveBasementDrawerOpen(false)}
+        header={{
+          title: resourcesData?.reserveBasement?.data?.title || resourcesData?.reserveBasement?.title || undefined,
+          description: resourcesData?.reserveBasement?.data?.description || resourcesData?.reserveBasement?.description || undefined,
+        }}
       />
       <DoorAccessDrawer
         isOpen={isDoorAccessDrawerOpen}
@@ -234,10 +254,18 @@ export default function InfoBanner({ data }: InfoBannerProps) {
           setIsDoorAccessDrawerOpen(false);
           setIsMembershipDrawerOpen(true);
         }}
+        header={{
+          title: resourcesData?.requestDoorAccess?.data?.title || resourcesData?.requestDoorAccess?.title || undefined,
+          description: resourcesData?.requestDoorAccess?.data?.description || resourcesData?.requestDoorAccess?.description || undefined,
+        }}
       />
       <FinancialDrawer
         isOpen={isFinancialDrawerOpen}
         onClose={() => setIsFinancialDrawerOpen(false)}
+        header={{
+          title: resourcesData?.financialAssistance?.data?.title || resourcesData?.financialAssistance?.title || undefined,
+          description: resourcesData?.financialAssistance?.data?.description || resourcesData?.financialAssistance?.description || undefined,
+        }}
       />
     </section>
   );

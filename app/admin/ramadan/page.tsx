@@ -6,12 +6,13 @@ import SectionEditor from "../components/SectionEditor";
 import VisibilityToggle from "../components/VisibilityToggle";
 import { SectionField } from "@/lib/home-default-sections";
 import { getRamadanDefaultSections } from "@/lib/ramadan-default-sections";
+import { toast } from "@/app/components/Toaster";
 
 export default function RamadanPageEditor() {
   const [sections, setSections] = useState<Record<string, SectionField[]>>(
     getRamadanDefaultSections()
   );
-  const [activeTab, setActiveTab] = useState<string>("daily_lessons");
+  const [activeTab, setActiveTab] = useState<string>("hero");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<Record<string, boolean>>({});
 
@@ -95,6 +96,33 @@ export default function RamadanPageEditor() {
             );
           }
 
+          // Map existing Hero data from Supabase into editor fields
+          const heroSource = sectionsSource.hero ?? null;
+          if (heroSource?.data) {
+            const heroData = heroSource.data as any;
+            transformed.hero = transformed.hero.map((field) => {
+              switch (field.id) {
+                case "hero-image":
+                  return {
+                    ...field,
+                    value: heroData.heroImage || field.value,
+                  };
+                case "hero-announcement-text":
+                  return {
+                    ...field,
+                    value: heroData.announcementText || field.value,
+                  };
+                case "hero-eid-text":
+                  return {
+                    ...field,
+                    value: heroData.eidText || field.value,
+                  };
+                default:
+                  return field;
+              }
+            });
+          }
+
           // Map existing Zakat-ul-Fitr data from Supabase into editor fields
           const zakatSource = sectionsSource.zakat_ul_fitr ?? null;
           if (zakatSource?.data) {
@@ -176,11 +204,20 @@ export default function RamadanPageEditor() {
     });
 
     const mapping: Record<string, (d: any) => any> = {
-      hero: (d) => ({
-        heroImage: d["hero-image"] || "",
-        announcementText: d["hero-announcement-text"] || "",
-        eidText: d["hero-eid-text"] || "",
-      }),
+      // When saving hero, only include heroImage if it is present in the
+      // submitted fields. This prevents the admin omitting the image from
+      // the editor (we hide the image field) from accidentally clearing the
+      // stored hero image in the DB.
+      hero: (d) => {
+        const out: any = {
+          announcementText: d["hero-announcement-text"] || "",
+          eidText: d["hero-eid-text"] || "",
+        };
+        if (Object.prototype.hasOwnProperty.call(d, "hero-image")) {
+          out.heroImage = d["hero-image"] || "";
+        }
+        return out;
+      },
       daily_lessons: (d) => ({
         image: d["lessons-image"] || "",
         title: d["lessons-title"] || "",
@@ -241,19 +278,20 @@ export default function RamadanPageEditor() {
       const result = await response.json();
 
       if (result.ok) {
-        alert(`${sectionId} saved successfully!`);
+        toast.success(`${sectionId} saved successfully!`);
         window.location.reload();
       } else {
-        alert(result.message || "Failed to save");
+        toast.error(result.message || "Failed to save");
       }
     } catch (error: any) {
-      alert(error?.message || "Failed to save");
+      toast.error(error?.message || "Failed to save");
     } finally {
       setSaving((prev) => ({ ...prev, [sectionId]: false }));
     }
   };
 
   const tabs = [
+    { id: "hero", label: "Hero", icon: "📣" },
     { id: "daily_lessons", label: "Daily Lessons", icon: "📖" },
     { id: "zakat_ul_fitr", label: "Zakat-ul-Fitr", icon: "💝" },
     { id: "community_iftars", label: "Community Iftars", icon: "🥘" },
@@ -278,10 +316,9 @@ export default function RamadanPageEditor() {
                   onClick={() => setActiveTab(tab.id)}
                   className={`
                     cursor-pointer mr-2 flex items-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-xs sm:text-sm font-medium border-2 transition-colors last:mr-0
-                    ${
-                      activeTab === tab.id
-                        ? "border-sky-600 bg-sky-50 text-sky-700"
-                        : "border-transparent bg-gray-50 text-gray-600 hover:border-gray-300 hover:bg-white hover:text-gray-800"
+                    ${activeTab === tab.id
+                      ? "border-sky-600 bg-sky-50 text-sky-700"
+                      : "border-transparent bg-gray-50 text-gray-600 hover:border-gray-300 hover:bg-white hover:text-gray-800"
                     }
                   `}
                 >
@@ -306,7 +343,14 @@ export default function RamadanPageEditor() {
                     <SectionEditor
                       sectionId={tab.id}
                       sectionTitle={tab.label}
-                      fields={sections[tab.id]}
+                      // For the hero tab, hide the image upload field and only
+                      // expose text fields. This lets admins change the
+                      // announcement/Eid text without uploading an image.
+                      fields={
+                        tab.id === "hero"
+                          ? sections[tab.id]?.filter((f) => f.id !== "hero-image")
+                          : sections[tab.id]
+                      }
                       onUpdate={handleSectionUpdate}
                       onSave={() => handleSave(tab.id)}
                       saving={saving[tab.id] || false}

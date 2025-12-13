@@ -5,6 +5,7 @@ import PageEditorLayout from "../components/PageEditorLayout";
 import SectionEditor from "../components/SectionEditor";
 import VisibilityToggle from "../components/VisibilityToggle";
 import { getDefaultSections, SectionField } from "@/lib/home-default-sections";
+import { toast } from "@/app/components/Toaster";
 
 export default function HomePageEditor() {
   const [sections, setSections] = useState<Record<string, SectionField[]>>(getDefaultSections());
@@ -380,16 +381,16 @@ export default function HomePageEditor() {
       console.log("[Admin Save] Response:", result);
       
       if (result.ok) {
-        alert(`${getSectionTitle(sectionId)} saved successfully!`);
+        toast.success(`${getSectionTitle(sectionId)} saved successfully!`);
         // Refresh the page data after successful save
         window.location.reload();
       } else {
         console.error("[Admin Save] Error:", result);
-        alert(`Failed to save: ${result.message || result.error || "Unknown error"}`);
+        toast.error(`Failed to save: ${result.message || result.error || "Unknown error"}`);
       }
     } catch (error: any) {
       console.error("[Admin Save] Exception:", error);
-      alert(`Failed to save: ${error.message || "Network error"}`);
+      toast.error(`Failed to save: ${error.message || "Network error"}`);
     } finally {
       setSaving((prev) => ({ ...prev, [sectionId]: false }));
     }

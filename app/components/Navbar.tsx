@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { usePathname } from "next/navigation";
 import ApplyMembershipDrawer from "./ApplyMembershipDrawer";
 import FinancialDrawer from "./FinancialDrawer";
@@ -58,28 +58,81 @@ const resourcesMenuItems: ResourceMenuItem[] = [
   { label: "Reserve Basement", href: "/resources#reserve-basement", drawer: "reserveBasement" },
 ];
 
+// Default visibility map - all pages visible by default for immediate rendering
+const getDefaultVisibility = (): Record<string, boolean> => {
+  const hrefMap: Record<string, string> = {
+    "home": "/",
+    "ramadan": "/ramadan",
+    "donate": "/donate",
+    "new-muslim": "/new-musilm",
+    "report-death": "/report-death",
+    "resources": "/resources",
+    "about": "/about",
+    "request-a-speaker": "/resources/request-a-speaker",
+    "request-a-visit": "/resources/request-a-visit",
+    "visitors-guide": "/resources/visitors-guide",
+    "islamic-prayer": "/resources/islamic-prayer",
+    "islamic-school": "/resources/islamic-school",
+    "elections-nominations": "/resources/elections-nominations",
+  };
+  
+  const defaultVisibility: Record<string, boolean> = {};
+  Object.values(hrefMap).forEach((href) => {
+    defaultVisibility[href] = true; // Show all by default
+  });
+  return defaultVisibility;
+};
+
 export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isMobileResourcesOpen, setIsMobileResourcesOpen] = useState(false);
   const [isMembershipDrawerOpen, setIsMembershipDrawerOpen] = useState(false);
   const [isFinancialDrawerOpen, setIsFinancialDrawerOpen] = useState(false);
   const [isDoorAccessDrawerOpen, setIsDoorAccessDrawerOpen] = useState(false);
   const [isReserveBasementDrawerOpen, setIsReserveBasementDrawerOpen] = useState(false);
   const [isContactDrawerOpen, setIsContactDrawerOpen] = useState(false);
-  const [pageVisibility, setPageVisibility] = useState<Record<string, boolean>>({});
+  // Start with default visibility - items show immediately, then update when API responds
+  const [pageVisibility, setPageVisibility] = useState<Record<string, boolean>>(getDefaultVisibility());
   const [visibilityLoaded, setVisibilityLoaded] = useState<boolean>(false);
+  const [resourcesData, setResourcesData] = useState<any | null>(null);
+  const [contactData, setContactData] = useState<any | null>(null);
   const pathname = usePathname();
 
   // Fetch page visibility status - use single API call for faster loading
   useEffect(() => {
     async function fetchPageVisibility() {
       try {
+        console.log("[Navbar] Fetching page visibility...");
         // Single API call to get all visibility data at once
-        const response = await fetch("/api/page-visibility");
-        const result = await response.json();
+        const response = await fetch("/api/page-visibility", {
+          cache: 'no-store', // Always fetch fresh data
+        });
         
-        if (result.ok && result.visibility) {
+        console.log("[Navbar] Page visibility response:", response.status);
+
+        // Defensive checks: some servers return HTML (error page) instead of JSON
+        // which causes `response.json()` to throw `Unexpected token '<'` in the console.
+        const contentType = response.headers.get("content-type") || "";
+
+        if (!response.ok) {
+          // Log text body to help debugging (likely an HTML error page or redirect)
+          const text = await response.text();
+          console.error("/api/page-visibility responded with non-OK status:", response.status, text);
+          // Fall back to marking visibility as loaded (do not block navigation)
+          setVisibilityLoaded(true);
+          return;
+        }
+
+        if (!contentType.includes("application/json")) {
+          const text = await response.text();
+          console.error("/api/page-visibility returned non-JSON response:", contentType, text);
+          setVisibilityLoaded(true);
+          return;
+        }
+
+        const result = await response.json();
+
+        if (result && result.ok && result.visibility) {
           // Map page names to hrefs
           const hrefMap: Record<string, string> = {
             "home": "/",
@@ -97,9 +150,11 @@ export default function Navbar() {
             "elections-nominations": "/resources/elections-nominations",
           };
 
-          const visibility: Record<string, boolean> = {};
-          
-          // Convert page names to hrefs
+          // Start with default visibility, then update with API data
+          // Pages not in API response default to visible
+          const visibility: Record<string, boolean> = { ...getDefaultVisibility() };
+
+          // Convert page names to hrefs and update visibility from API
           Object.entries(result.visibility).forEach(([pageName, isVisible]) => {
             const href = hrefMap[pageName];
             if (href) {
@@ -109,19 +164,47 @@ export default function Navbar() {
 
           setPageVisibility(visibility);
           setVisibilityLoaded(true);
+          console.log("[Navbar] Page visibility loaded successfully");
         } else {
+          console.warn("[Navbar] Page visibility response invalid:", result);
           // On error, set all to visible and mark as loaded
           setVisibilityLoaded(true);
         }
       } catch (error) {
-        console.error("Failed to fetch page visibility:", error);
+        console.error("[Navbar] Failed to fetch page visibility:", error);
         // On error, set all to visible and mark as loaded
         setVisibilityLoaded(true);
       }
     }
 
+    // Call immediately on mount
     fetchPageVisibility();
   }, []);
+
+  // Lazily fetch resources data on demand (when a resources drawer is opened).
+  // This avoids making API calls on every page load — only fetch when the
+  // user interacts with resources/drawers. Contact data is fetched by the
+  // ContactDrawer itself when opened, so we don't prefetch it here.
+  const isFetchingResources = useRef(false);
+  const fetchResourcesOnce = async () => {
+    // Prevent multiple simultaneous calls
+    if (resourcesData || isFetchingResources.current) return;
+    
+    isFetchingResources.current = true;
+    try {
+      const resResources = await fetch('/api/resources', { cache: 'no-store' });
+      if (!resResources.ok) return;
+      const json = await resResources.json();
+      if (json.ok && json.resources?.data) {
+        const src = json.resources.data.data && typeof json.resources.data.data === 'object' ? json.resources.data.data : json.resources.data;
+        setResourcesData(src);
+      }
+    } catch (err) {
+      console.error('Failed to fetch resources for drawers:', err);
+    } finally {
+      isFetchingResources.current = false;
+    }
+  };
 
   const isResourceActive = (href: string) => {
     const basePath = href.split("#")[0];
@@ -189,16 +272,9 @@ export default function Navbar() {
     setIsMenuOpen(false);
   };
 
-  const openSearch = () => {
-    setIsSearchOpen(true);
-    setIsMenuOpen(false); // Close menu if open
-  };
 
-  const closeSearch = () => {
-    setIsSearchOpen(false);
-  };
-
-  const openMembershipDrawer = () => {
+  const openMembershipDrawer = async () => {
+    await fetchResourcesOnce();
     setIsMembershipDrawerOpen(true);
     setIsMenuOpen(false);
   };
@@ -207,7 +283,8 @@ export default function Navbar() {
     setIsMembershipDrawerOpen(false);
   };
 
-  const openFinancialDrawer = () => {
+  const openFinancialDrawer = async () => {
+    await fetchResourcesOnce();
     setIsFinancialDrawerOpen(true);
     setIsMenuOpen(false);
   };
@@ -216,7 +293,8 @@ export default function Navbar() {
     setIsFinancialDrawerOpen(false);
   };
 
-  const openDoorAccessDrawer = () => {
+  const openDoorAccessDrawer = async () => {
+    await fetchResourcesOnce();
     setIsDoorAccessDrawerOpen(true);
     setIsMenuOpen(false);
   };
@@ -225,7 +303,8 @@ export default function Navbar() {
     setIsDoorAccessDrawerOpen(false);
   };
 
-  const openReserveBasementDrawer = () => {
+  const openReserveBasementDrawer = async () => {
+    await fetchResourcesOnce();
     setIsReserveBasementDrawerOpen(true);
     setIsMenuOpen(false);
   };
@@ -246,444 +325,362 @@ export default function Navbar() {
   return (
     <>
       <nav className="fixed top-0 z-50 w-full bg-white/95 shadow-md backdrop-blur">
-      {/* Search Mode */}
-      <div
-        className={`fixed inset-x-0 top-0 z-[60] bg-white/95 transition-opacity duration-200 ${
-          isSearchOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-        }`}
-      >
-        <div className="px-4 py-4 flex items-center justify-center gap-4 bg-gray-50 shadow-md">
-          <button
-            type="button"
-            onClick={closeSearch}
-            aria-label="Close search"
-            className="p-2 text-sky-900 hover:bg-gray-200 rounded-md transition-colors duration-200 absolute left-4"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-5 w-5"
-            >
-              <path d="M19 12H5M12 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <div className="relative max-w-md w-full">
-            <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-sky-900">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
-              >
-                <circle cx="11" cy="11" r="7" />
-                <line x1="16.65" y1="16.65" x2="21" y2="21" />
-              </svg>
-            </div>
-            <input
-              type="text"
-              placeholder="Search this site"
-              className="w-full pl-10 pr-4 py-2.5 bg-white rounded-lg border border-gray-200 text-sky-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:border-transparent transition-all duration-200"
-              autoFocus={isSearchOpen}
-            />
-          </div>
-        </div>
-      </div>
 
-      {/* Normal Navbar */}
-      <div className="transition-opacity duration-200">
-        <div className="px-6 py-2 flex items-center justify-between">
-          <Link href="/" className="flex items-center hover:opacity-80 transition-opacity">
-            <Image
-              src="/images/fortlogos.png"
-              alt="Fort Dodge Islamic Center logo"
-              width={400}
-              height={100}
-              className="h-17 w-auto"
-              priority
-            />
-          </Link>
 
-          {/* Desktop Menu */}
-          <div className="hidden lg:flex flex-wrap items-center gap-x-4 gap-y-2">
-            {menuItems.map((item) => {
-              // Check visibility - show by default, hide only if explicitly false
-              // Single API call loads fast, so flash is minimal
-              const isVisible = pageVisibility[item.href] !== undefined ? pageVisibility[item.href] : true;
-              if (!isVisible) return null; // Hide if explicitly false
-              
-              const active = isActive(item.href);
+        {/* Normal Navbar */}
+        <div className="transition-opacity duration-200">
+          <div className="px-6 py-2 flex items-center justify-between">
+            <Link href="/" className="flex items-center hover:opacity-80 transition-opacity">
+              <Image
+                src="/images/fortlogos.png"
+                alt="Fort Dodge Islamic Center logo"
+                width={400}
+                height={100}
+                className="h-17 w-auto"
+                priority
+              />
+            </Link>
 
-              if (item.label === "Resources") {
-                return (
-                  <div key={item.label} className="relative group">
-                    <Link
-                      href={item.href}
-                      aria-current={active ? "page" : undefined}
-                      className={`flex items-center gap-1 cursor-pointer rounded-md px-3 py-1.5 whitespace-nowrap font-bold tracking-wide transition-colors duration-200 ${
-                        active
-                          ? "bg-sky-800 text-white"
-                          : "text-sky-900 hover:text-gray-600"
-                      }`}
-                    >
-                      <span>{item.label}</span>
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="h-4 w-4"
-                        aria-hidden="true"
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
-                    </Link>
+            {/* Desktop Menu */}
+            <div className="hidden lg:flex flex-wrap items-center gap-x-4 gap-y-2">
+              {menuItems.map((item) => {
+                // Items show immediately with default visibility, then update when API responds
+                // Check visibility - hide if explicitly false
+                const isVisible = pageVisibility[item.href] !== undefined ? pageVisibility[item.href] : true;
+                if (!isVisible) return null; // Hide if explicitly false
 
-                    <div className="invisible absolute left-1/2 z-50 mt-2 w-72 -translate-x-1/2 transform rounded-none border border-gray-200 bg-white/98 py-1.5 text-sm text-gray-800 opacity-0 shadow-lg shadow-gray-300 ring-1 ring-black/5 transition-all duration-150 group-hover:visible group-hover:opacity-100">
-                      {resourcesMenuItems.map((resource) => {
-                        // Check visibility for resource items (skip drawers and external links)
-                        if (!resource.drawer && !resource.external) {
-                          // Show by default, hide only if explicitly false
-                          const isVisible = pageVisibility[resource.href] !== undefined ? pageVisibility[resource.href] : true;
-                          if (!isVisible) return null;
-                        }
-                        
-                        const activeResource = isResourceActive(resource.href);
-                        return (
-                          <Link
-                            key={resource.href}
-                            href={resource.href}
-                            onClick={(event) => {
-                              if (resource.drawer) {
-                                event.preventDefault();
-                                if (resource.drawer === "membership") {
-                                  openMembershipDrawer();
-                                } else if (resource.drawer === "financial") {
-                                  openFinancialDrawer();
-                                } else if (resource.drawer === "doorAccess") {
-                                  openDoorAccessDrawer();
-                                } else if (resource.drawer === "reserveBasement") {
-                                  openReserveBasementDrawer();
-                                }
-                              }
-                            }}
-                            className={`flex items-center px-5 py-2.5 text-left text-[0.9rem] border-b border-gray-100 last:border-b-0 transition-colors hover:bg-gray-100 hover:text-gray-900`}
-                          >
-                            <span className="mr-2 h-1 w-1 rounded-full bg-gray-400" />
-                            <span
-                              className={`truncate inline-block px-2 py-0.5 text-[0.78rem] font-semibold ${
-                                activeResource
-                                  ? "bg-sky-800 text-white"
-                                  : "bg-transparent text-sky-900"
-                              }`}
-                            >
-                              {resource.label}
-                            </span>
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              }
+                const active = isActive(item.href);
 
-              if (item.label === "Contact Us") {
-                return (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={openContactDrawer}
-                    aria-current={active ? "page" : undefined}
-                    className={`cursor-pointer rounded-md px-2 py-1 whitespace-nowrap font-bold transition-colors duration-200 ${
-                      active
-                        ? "bg-sky-800 text-white"
-                        : "text-sky-900 hover:text-gray-600"
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                );
-              }
-
-              return (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  aria-current={active ? "page" : undefined}
-                  className={`cursor-pointer rounded-md px-2 py-1 whitespace-nowrap font-bold transition-colors duration-200 ${
-                    active
-                      ? "bg-sky-800 text-white"
-                      : "text-sky-900 hover:text-gray-600"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-
-            <button
-              type="button"
-              onClick={openSearch}
-              aria-label="Search"
-              className="ml-4 rounded-full border border-gray-300 p-2 text-sky-900 hover:bg-gray-100 transition-all duration-200"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
-              >
-                <circle cx="11" cy="11" r="7" />
-                <line x1="16.65" y1="16.65" x2="21" y2="21" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Hamburger Menu Button - Mobile & Tablet */}
-          <button
-            type="button"
-            onClick={toggleMenu}
-            aria-label="Toggle menu"
-            className="lg:hidden p-2 rounded-md text-gray-600 hover:bg-gray-100 transition-all duration-200"
-          >
-            {isMenuOpen ? (
-              // Close icon (X)
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-6 w-6 transition-transform duration-200"
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            ) : (
-              // Hamburger icon
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-6 w-6 transition-transform duration-200"
-              >
-                <line x1="3" y1="12" x2="21" y2="12" />
-                <line x1="3" y1="6" x2="21" y2="6" />
-                <line x1="3" y1="18" x2="21" y2="18" />
-              </svg>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Mobile & Tablet Menu */}
-      <div
-        className={`lg:hidden overflow-y-auto transition-all duration-300 ease-in-out ${
-          isMenuOpen ? "max-h-screen opacity-100" : "max-h-0 opacity-0"
-        }`}
-      >
-        <div className="px-6 py-4 bg-white border-t border-gray-200">
-          <div className="flex flex-col space-y-4">
-            {menuItems.map((item) => {
-              // Check visibility - show by default, hide only if explicitly false
-              const isVisible = pageVisibility[item.href] !== undefined ? pageVisibility[item.href] : true;
-              if (!isVisible) return null; // Hide if explicitly false
-              
-              const active = isActive(item.href);
-
-              if (item.label === "Resources") {
-                return (
-                  <div key={item.label} className="space-y-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setIsMobileResourcesOpen((prev) => !prev)
-                      }
-                      aria-expanded={isMobileResourcesOpen}
-                      className={`flex w-full items-center justify-between rounded-md px-3 py-2 font-bold transition-colors ${
-                        active || isMobileResourcesOpen
-                          ? "bg-sky-800 text-white"
-                          : "text-sky-900 hover:text-gray-900"
-                      }`}
-                    >
-                      <span>{item.label}</span>
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className={`h-5 w-5 transform transition-transform duration-200 ${
-                          isMobileResourcesOpen ? "rotate-180" : "rotate-0"
-                        }`}
-                        aria-hidden="true"
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
-                    </button>
-                    <div
-                      className={`ml-3 flex flex-col space-y-1 overflow-hidden transition-[max-height,opacity] duration-300 ${
-                        isMobileResourcesOpen
-                          ? "max-h-[75vh] overflow-y-auto pr-1 opacity-100"
-                          : "max-h-0 opacity-0"
-                      }`}
-                    >
+                if (item.label === "Resources") {
+                  return (
+                    <div key={item.label} className="relative group">
                       <Link
                         href={item.href}
-                        onClick={closeMenu}
-                        className="rounded-md px-3 py-1.5 text-sm font-semibold text-gray-800 underline underline-offset-2 hover:bg-gray-100"
+                        aria-current={active ? "page" : undefined}
+                        className={`flex items-center gap-1 cursor-pointer rounded-md px-3 py-1.5 whitespace-nowrap font-bold tracking-wide transition-colors duration-200 ${active
+                          ? "bg-sky-800 text-white"
+                          : "text-sky-900 hover:text-gray-600"
+                          }`}
                       >
-                        View all resources
+                        <span>{item.label}</span>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
                       </Link>
-                      {resourcesMenuItems.map((resource) => {
-                        // Check visibility for resource items (skip drawers and external links)
-                        if (!resource.drawer && !resource.external) {
-                          // Show by default, hide only if explicitly false
-                          const isVisible = pageVisibility[resource.href] !== undefined ? pageVisibility[resource.href] : true;
-                          if (!isVisible) return null;
-                        }
-                        
-                        const activeResource = isResourceActive(resource.href);
-                        return (
-                          <Link
-                            key={resource.href}
-                            href={resource.href}
-                            onClick={(event) => {
-                              if (resource.drawer) {
-                                event.preventDefault();
-                                if (resource.drawer === "membership") {
-                                  openMembershipDrawer();
-                                } else if (resource.drawer === "financial") {
-                                  openFinancialDrawer();
-                                } else if (resource.drawer === "doorAccess") {
-                                  openDoorAccessDrawer();
-                                } else if (resource.drawer === "reserveBasement") {
-                                  openReserveBasementDrawer();
+
+                      <div className="invisible absolute left-1/2 z-50 mt-2 w-72 -translate-x-1/2 transform rounded-none border border-gray-200 bg-white/98 py-1.5 text-sm text-gray-800 opacity-0 shadow-lg shadow-gray-300 ring-1 ring-black/5 transition-all duration-150 group-hover:visible group-hover:opacity-100">
+                        {resourcesMenuItems.map((resource) => {
+                          // Check visibility for resource items (skip drawers and external links)
+                          if (!resource.drawer && !resource.external) {
+                            // Items show immediately with default visibility, then update when API responds
+                            const isVisible = pageVisibility[resource.href] !== undefined ? pageVisibility[resource.href] : true;
+                            if (!isVisible) return null;
+                          }
+
+                          const activeResource = isResourceActive(resource.href);
+                          return (
+                            <Link
+                              key={resource.href}
+                              href={resource.href}
+                              onClick={(event) => {
+                                if (resource.drawer) {
+                                  event.preventDefault();
+                                  if (resource.drawer === "membership") {
+                                    openMembershipDrawer();
+                                  } else if (resource.drawer === "financial") {
+                                    openFinancialDrawer();
+                                  } else if (resource.drawer === "doorAccess") {
+                                    openDoorAccessDrawer();
+                                  } else if (resource.drawer === "reserveBasement") {
+                                    openReserveBasementDrawer();
+                                  }
                                 }
-                                setIsMobileResourcesOpen(false);
-                              } else {
-                                closeMenu();
-                              }
-                            }}
-                            className="rounded-md px-3 py-1.5 text-sm transition-colors text-gray-700 hover:bg-gray-100"
-                          >
-                            <span
-                              className={`inline-block px-2 py-0.5 text-[0.78rem] font-semibold ${
-                                activeResource
+                              }}
+                              className={`flex items-center px-5 py-2.5 text-left text-[0.9rem] border-b border-gray-100 last:border-b-0 transition-colors hover:bg-gray-100 hover:text-gray-900`}
+                            >
+                              <span className="mr-2 h-1 w-1 rounded-full bg-gray-400" />
+                              <span
+                                className={`truncate inline-block px-2 py-0.5 text-[0.78rem] font-semibold ${activeResource
                                   ? "bg-sky-800 text-white"
                                   : "bg-transparent text-sky-900"
-                              }`}
-                            >
-                              {resource.label}
-                            </span>
-                          </Link>
-                        );
-                      })}
+                                  }`}
+                              >
+                                {resource.label}
+                              </span>
+                            </Link>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              }
+                  );
+                }
 
-              if (item.label === "Contact Us") {
-                return (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => {
-                      openContactDrawer();
-                      closeMenu();
-                    }}
-                    aria-current={active ? "page" : undefined}
-                    className={`cursor-pointer rounded-md px-3 py-2 font-bold transition-colors w-full text-left ${
-                      active
+                if (item.label === "Contact Us") {
+                  return (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={openContactDrawer}
+                      aria-current={active ? "page" : undefined}
+                      className={`cursor-pointer rounded-md px-2 py-1 whitespace-nowrap font-bold transition-colors duration-200 ${active
                         ? "bg-sky-800 text-white"
-                        : "text-sky-900 hover:text-gray-900"
-                    }`}
+                        : "text-sky-900 hover:text-gray-600"
+                        }`}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                }
+
+                return (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    aria-current={active ? "page" : undefined}
+                    className={`cursor-pointer rounded-md px-2 py-1 whitespace-nowrap font-bold transition-colors duration-200 ${active
+                      ? "bg-sky-800 text-white"
+                      : "text-sky-900 hover:text-gray-600"
+                      }`}
                   >
                     {item.label}
-                  </button>
+                  </Link>
                 );
-              }
+              })}
 
-              return (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  onClick={closeMenu}
-                  aria-current={active ? "page" : undefined}
-                  className={`cursor-pointer rounded-md px-3 py-2 font-bold transition-colors ${
-                    active
-                      ? "bg-sky-800 text-white"
-                      : "text-sky-900 hover:text-gray-900"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
+
+            </div>
+
+            {/* Hamburger Menu Button - Mobile & Tablet */}
             <button
               type="button"
-              onClick={openSearch}
-              aria-label="Search"
-              className="mt-2 rounded-full border border-gray-300 p-2 text-sky-900 hover:bg-gray-100 transition-colors w-fit"
+              onClick={toggleMenu}
+              aria-label="Toggle menu"
+              className="lg:hidden p-2 rounded-md text-gray-600 hover:bg-gray-100 transition-all duration-200"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
-              >
-                <circle cx="11" cy="11" r="7" />
-                <line x1="16.65" y1="16.65" x2="21" y2="21" />
-              </svg>
+              {isMenuOpen ? (
+                // Close icon (X)
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-6 w-6 transition-transform duration-200"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              ) : (
+                // Hamburger icon
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-6 w-6 transition-transform duration-200"
+                >
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+              )}
             </button>
           </div>
         </div>
-      </div>
+
+        {/* Mobile & Tablet Menu */}
+        <div
+          className={`lg:hidden overflow-y-auto transition-all duration-300 ease-in-out ${isMenuOpen ? "max-h-screen opacity-100" : "max-h-0 opacity-0"
+            }`}
+        >
+          <div className="px-6 py-4 bg-white border-t border-gray-200">
+            <div className="flex flex-col space-y-4">
+              {menuItems.map((item) => {
+                // Items show immediately with default visibility, then update when API responds
+                // Check visibility - hide if explicitly false
+                const isVisible = pageVisibility[item.href] !== undefined ? pageVisibility[item.href] : true;
+                if (!isVisible) return null; // Hide if explicitly false
+
+                const active = isActive(item.href);
+
+                if (item.label === "Resources") {
+                  return (
+                    <div key={item.label} className="space-y-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setIsMobileResourcesOpen((prev) => !prev)
+                        }
+                        aria-expanded={isMobileResourcesOpen}
+                        className={`flex w-full items-center justify-between rounded-md px-3 py-2 font-bold transition-colors ${active || isMobileResourcesOpen
+                          ? "bg-sky-800 text-white"
+                          : "text-sky-900 hover:text-gray-900"
+                          }`}
+                      >
+                        <span>{item.label}</span>
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className={`h-5 w-5 transform transition-transform duration-200 ${isMobileResourcesOpen ? "rotate-180" : "rotate-0"
+                            }`}
+                          aria-hidden="true"
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                      <div
+                        className={`ml-3 flex flex-col space-y-1 overflow-hidden transition-[max-height,opacity] duration-300 ${isMobileResourcesOpen
+                          ? "max-h-[75vh] overflow-y-auto pr-1 opacity-100"
+                          : "max-h-0 opacity-0"
+                          }`}
+                      >
+                        <Link
+                          href={item.href}
+                          onClick={closeMenu}
+                          className="rounded-md px-3 py-1.5 text-sm font-semibold text-gray-800 underline underline-offset-2 hover:bg-gray-100"
+                        >
+                          View all resources
+                        </Link>
+                        {resourcesMenuItems.map((resource) => {
+                          // Check visibility for resource items (skip drawers and external links)
+                          if (!resource.drawer && !resource.external) {
+                            // Items show immediately with default visibility, then update when API responds
+                            const isVisible = pageVisibility[resource.href] !== undefined ? pageVisibility[resource.href] : true;
+                            if (!isVisible) return null;
+                          }
+
+                          const activeResource = isResourceActive(resource.href);
+                          return (
+                            <Link
+                              key={resource.href}
+                              href={resource.href}
+                              onClick={(event) => {
+                                if (resource.drawer) {
+                                  event.preventDefault();
+                                  if (resource.drawer === "membership") {
+                                    openMembershipDrawer();
+                                  } else if (resource.drawer === "financial") {
+                                    openFinancialDrawer();
+                                  } else if (resource.drawer === "doorAccess") {
+                                    openDoorAccessDrawer();
+                                  } else if (resource.drawer === "reserveBasement") {
+                                    openReserveBasementDrawer();
+                                  }
+                                  setIsMobileResourcesOpen(false);
+                                } else {
+                                  closeMenu();
+                                }
+                              }}
+                              className="rounded-md px-3 py-1.5 text-sm transition-colors text-gray-700 hover:bg-gray-100"
+                            >
+                              <span
+                                className={`inline-block px-2 py-0.5 text-[0.78rem] font-semibold ${activeResource
+                                  ? "bg-sky-800 text-white"
+                                  : "bg-transparent text-sky-900"
+                                  }`}
+                              >
+                                {resource.label}
+                              </span>
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (item.label === "Contact Us") {
+                  return (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => {
+                        openContactDrawer();
+                        closeMenu();
+                      }}
+                      aria-current={active ? "page" : undefined}
+                      className={`cursor-pointer rounded-md px-3 py-2 font-bold transition-colors w-full text-left ${active
+                        ? "bg-sky-800 text-white"
+                        : "text-sky-900 hover:text-gray-900"
+                        }`}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                }
+
+                return (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    onClick={closeMenu}
+                    aria-current={active ? "page" : undefined}
+                    className={`cursor-pointer rounded-md px-3 py-2 font-bold transition-colors ${active
+                      ? "bg-sky-800 text-white"
+                      : "text-sky-900 hover:text-gray-900"
+                      }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+
+            </div>
+          </div>
+        </div>
       </nav>
       <ApplyMembershipDrawer
         isOpen={isMembershipDrawerOpen}
         onClose={closeMembershipDrawer}
+        header={{
+          title: resourcesData?.applyRenewMembership?.data?.title || resourcesData?.applyRenewMembership?.title || undefined,
+          description: resourcesData?.applyRenewMembership?.data?.description || resourcesData?.applyRenewMembership?.description || undefined,
+        }}
       />
       <FinancialDrawer
         isOpen={isFinancialDrawerOpen}
         onClose={closeFinancialDrawer}
+        header={{
+          title: resourcesData?.financialAssistance?.data?.title || resourcesData?.financialAssistance?.title || undefined,
+          description: resourcesData?.financialAssistance?.data?.description || resourcesData?.financialAssistance?.description || undefined,
+        }}
       />
       <DoorAccessDrawer
         isOpen={isDoorAccessDrawerOpen}
         onClose={closeDoorAccessDrawer}
         onOpenMembershipDrawer={openMembershipDrawer}
+        header={{
+          title: resourcesData?.requestDoorAccess?.data?.title || resourcesData?.requestDoorAccess?.title || undefined,
+          description: resourcesData?.requestDoorAccess?.data?.description || resourcesData?.requestDoorAccess?.description || undefined,
+        }}
       />
       <ReserveBasementDrawer
         isOpen={isReserveBasementDrawerOpen}
         onClose={closeReserveBasementDrawer}
+        header={{
+          title: resourcesData?.reserveBasement?.data?.title || resourcesData?.reserveBasement?.title || undefined,
+          description: resourcesData?.reserveBasement?.data?.description || resourcesData?.reserveBasement?.description || undefined,
+        }}
       />
       <ContactDrawer
         isOpen={isContactDrawerOpen}
@@ -693,4 +690,3 @@ export default function Navbar() {
   );
 }
 
-  
