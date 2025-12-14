@@ -82,53 +82,18 @@ function subscribeToMembershipCache(cb: (data: any) => void) {
   };
 }
 
-// Default values as fallback
-const DEFAULT_OVERVIEW = [
-  "Fort Dodge Islamic Center offers two types of membership: paid full membership and associate membership.",
-  "Paid full members have the right to vote in General Assembly elections and are eligible to serve on the Board of Directors. The annual membership fee is $30 and applies to members of the General Membership.",
-  "Associate members do not have voting privileges, but they are still entitled to all other benefits of membership, such as access to the Center's facilities and programs.",
-  "Please complete this form to establish or renew your membership at Fort Dodge Islamic Center. If you have any questions, please email membership@darularqam.org.",
-];
 
-const DEFAULT_HIGHLIGHTS = [
-  "Voting eligibility",
-  "Facility access",
-  "Community updates",
-];
-
-const DEFAULT_INSTRUCTIONS = [
-  "Complete all required parts clearly.",
-  "Submit the form.",
-  "The fee for full membership is $30 per person per year. There is no fee for associate membership.",
-  "Select the method of payment: debit or credit card through our website, MOHID, or by submitting the fees into the donation box.",
-];
-
-const DEFAULT_PAYMENT_OPTIONS = [
-  {
-    label: "Donate Portal",
-    description: "Use the Arqum donate page for debit/credit payments.",
-    href: "/donate",
-    external: false,
-  },
-  {
-    label: "MOHID Online",
-    description: "Complete dues through the secure Mohid donation flow.",
-    href: "https://us.mohid.co/tx/dallas/daic/masjid/online/donation",
-    external: true,
-  },
-];
-
-// Helper function to extract data from cache
+// Helper function to extract data from cache (no defaults - only returns what's in database)
 function extractMembershipData(src: any) {
   const result = {
     header: null as { title?: string; description?: string } | null,
-    overview: DEFAULT_OVERVIEW,
-    highlights: DEFAULT_HIGHLIGHTS,
-    instructions: DEFAULT_INSTRUCTIONS,
-    donateLink: "/donate",
-    mohidLink: "https://us.mohid.co/tx/dallas/daic/masjid/online/donation",
-    mailingListNote: "Once your application is processed, we will add your email to our members mailing list.",
-    googleFormUrl: "https://docs.google.com/forms/d/e/1FAIpQLSddImQS6sjm5dzc-IR4Gxj1Po8iMW9tut0ae6ddxp-DkVh2mQ/viewform",
+    overview: [] as string[],
+    highlights: [] as string[],
+    instructions: [] as string[],
+    donateLink: "",
+    mohidLink: "",
+    mailingListNote: "",
+    googleFormUrl: "",
   };
 
   if (!src) return result;
@@ -165,18 +130,18 @@ function extractMembershipData(src: any) {
     ).filter(Boolean);
   }
 
-  // Other fields
+  // Other fields - only set if they exist in database
   if (contentData['donate-link'] || contentData.donateLink) {
-    result.donateLink = contentData['donate-link'] || contentData.donateLink;
+    result.donateLink = contentData['donate-link'] || contentData.donateLink || "";
   }
   if (contentData['mohid-link'] || contentData.mohidLink) {
-    result.mohidLink = contentData['mohid-link'] || contentData.mohidLink;
+    result.mohidLink = contentData['mohid-link'] || contentData.mohidLink || "";
   }
   if (contentData['mailing-list-note'] || contentData.mailingListNote) {
-    result.mailingListNote = contentData['mailing-list-note'] || contentData.mailingListNote;
+    result.mailingListNote = contentData['mailing-list-note'] || contentData.mailingListNote || "";
   }
   if (contentData['google-form-url'] || contentData.googleFormUrl) {
-    result.googleFormUrl = contentData['google-form-url'] || contentData.googleFormUrl;
+    result.googleFormUrl = contentData['google-form-url'] || contentData.googleFormUrl || "";
   }
 
   return result;
@@ -187,65 +152,70 @@ export default function ApplyMembershipDrawer({
   onClose,
   header,
 }: ApplyMembershipDrawerProps) {
-  // Initialize state from cache if available, otherwise use defaults
-  const cachedData = membershipCache ? extractMembershipData(membershipCache) : null;
-  
-  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(
-    cachedData?.header || null
-  );
-  const [overview, setOverview] = useState<string[]>(cachedData?.overview || DEFAULT_OVERVIEW);
-  const [highlights, setHighlights] = useState<string[]>(cachedData?.highlights || DEFAULT_HIGHLIGHTS);
-  const [instructions, setInstructions] = useState<string[]>(cachedData?.instructions || DEFAULT_INSTRUCTIONS);
-  const [donateLink, setDonateLink] = useState(cachedData?.donateLink || "/donate");
-  const [mohidLink, setMohidLink] = useState(cachedData?.mohidLink || "https://us.mohid.co/tx/dallas/daic/masjid/online/donation");
-  const [mailingListNote, setMailingListNote] = useState(cachedData?.mailingListNote || "Once your application is processed, we will add your email to our members mailing list.");
-  const [googleFormUrl, setGoogleFormUrl] = useState(cachedData?.googleFormUrl || "https://docs.google.com/forms/d/e/1FAIpQLSddImQS6sjm5dzc-IR4Gxj1Po8iMW9tut0ae6ddxp-DkVh2mQ/viewform");
+  // Don't initialize with any data - wait for data from database
+  // Never use cache on initialization to avoid showing stale/static data
+  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(null);
+  const [overview, setOverview] = useState<string[]>([]);
+  const [highlights, setHighlights] = useState<string[]>([]);
+  const [instructions, setInstructions] = useState<string[]>([]);
+  const [donateLink, setDonateLink] = useState("");
+  const [mohidLink, setMohidLink] = useState("");
+  const [mailingListNote, setMailingListNote] = useState("");
+  const [googleFormUrl, setGoogleFormUrl] = useState("");
+  const [dataLoaded, setDataLoaded] = useState(false);
 
-  // Don't pre-fetch on mount - only fetch when drawer opens
+  // Always fetch from database - only use real data from Supabase
+  const applySrcToState = (src: any) => {
+    if (!src) return;
+    const extracted = extractMembershipData(src);
+    
+    setLocalHeader(extracted.header);
+    setOverview(extracted.overview);
+    setHighlights(extracted.highlights);
+    setInstructions(extracted.instructions);
+    setDonateLink(extracted.donateLink);
+    setMohidLink(extracted.mohidLink);
+    setMailingListNote(extracted.mailingListNote);
+    setGoogleFormUrl(extracted.googleFormUrl);
+    setDataLoaded(true);
+  };
 
-  // Update state when drawer opens or cache changes
+  // Set up subscription (only subscribe, don't fetch on mount)
   useEffect(() => {
     let mounted = true;
 
-    const applySrcToState = (src: any) => {
-      if (!src || !mounted) return;
-      const extracted = extractMembershipData(src);
-      
-      if (mounted) {
-        if (extracted.header) setLocalHeader(extracted.header);
-        setOverview(extracted.overview);
-        setHighlights(extracted.highlights);
-        setInstructions(extracted.instructions);
-        setDonateLink(extracted.donateLink);
-        setMohidLink(extracted.mohidLink);
-        setMailingListNote(extracted.mailingListNote);
-        setGoogleFormUrl(extracted.googleFormUrl);
-      }
-    };
-
-    // Subscribe to cache updates so we update only when cache changes.
+    // Subscribe to cache updates so we update when cache changes (even when drawer is closed)
     const unsubscribe = subscribeToMembershipCache((data) => {
-      if (!data) return;
-      applySrcToState(data);
+      if (!mounted) return;
+      if (data) {
+        applySrcToState(data);
+      }
     });
 
-    // If drawer is open, populate immediately from cache (synchronously if available)
-    if (isOpen) {
-      // Check cache synchronously first for instant display
-      if (membershipCache) {
-        applySrcToState(membershipCache);
-      }
-      // Also fetch to ensure we have the latest data (will use cache if available)
-      fetchMembershipCached().then((data) => {
-        if (mounted && data) applySrcToState(data);
-      }).catch((err) => console.error('[ApplyMembershipDrawer] fetchMembershipCached error:', err));
-    }
-
     return () => { mounted = false; unsubscribe(); };
+  }, []);
+
+  // Always fetch fresh data when drawer opens
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    let mounted = true;
+
+    // Always force fetch fresh data from database when drawer opens
+    fetchMembershipCached(true).then((data) => {
+      if (mounted && data) {
+        applySrcToState(data);
+      }
+    }).catch((err) => {
+      console.error('[ApplyMembershipDrawer] fetchMembershipCached error:', err);
+    });
+
+    return () => { mounted = false; };
   }, [isOpen]);
 
-  // Always use localHeader from the new API, fallback to header prop if not available
-  const effectiveHeader = localHeader || header;
+  // Only use localHeader from Supabase - ignore header prop to avoid showing static data
+  // Only show header when data is loaded from Supabase
+  const effectiveHeader = dataLoaded ? localHeader : null;
   const handleFormSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -296,18 +266,16 @@ export default function ApplyMembershipDrawer({
       >
         <header className="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
           <div className="max-w-xl">
-            <h2 id="membership-drawer-title" className="text-xl font-semibold tracking-tight">
-              {effectiveHeader?.title ?? "Fort Dodge Islamic Center Membership Application Form"}
-            </h2>
-            {effectiveHeader?.description ? (
+            {effectiveHeader?.title && (
+              <h2 id="membership-drawer-title" className="text-xl font-semibold tracking-tight">
+                {effectiveHeader.title}
+              </h2>
+            )}
+            {effectiveHeader?.description && (
               <p 
                 className="mt-1 text-sm text-white/80"
                 dangerouslySetInnerHTML={{ __html: effectiveHeader.description }}
               />
-            ) : (
-              <p className="mt-1 text-sm text-white/80">
-                Submit the quick intake below and finish the official Google Form in the next step.
-              </p>
             )}
           </div>
 
@@ -334,68 +302,95 @@ export default function ApplyMembershipDrawer({
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 pb-7 pt-6">
-          <div className="space-y-4">
-            {overview.map((text) => (
-              <p key={text} className="text-sm leading-relaxed text-gray-700">
-                {text}
-              </p>
-            ))}
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {highlights.map((item) => (
-              <span
-                key={item}
-                className="rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-800"
-              >
-                {item}
-              </span>
-            ))}
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-sky-100 bg-linear-to-br from-white to-sky-50 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">
-              Instructions
-            </p>
-            <ul className="mt-3 space-y-3 text-sm text-gray-700">
-              {instructions.map((step) => (
-                <li key={step} className="flex items-start gap-2">
-                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-sky-600" />
-                  <span>{step}</span>
-                </li>
+          {!dataLoaded ? (
+            <div className="text-center py-8">
+              <p className="text-gray-600">Loading...</p>
+            </div>
+          ) : (
+            <>
+              {overview.length > 0 && (
+            <div className="space-y-4">
+              {overview.map((text, index) => (
+                <div 
+                  key={index} 
+                  className="text-sm leading-relaxed text-gray-700 prose prose-sm max-w-none [&_*]:max-w-full [&_strong]:font-semibold [&_em]:italic [&_a]:text-sky-700 [&_a]:underline"
+                  dangerouslySetInnerHTML={{ __html: text || '' }}
+                />
               ))}
-              <li className="flex flex-col gap-1 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
-                <span className="font-semibold text-gray-900">Online link:</span>
-                <Link
-                  href={donateLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="break-all text-sky-700 underline underline-offset-2"
+            </div>
+          )}
+          {highlights.length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {highlights.map((item, index) => (
+                <span
+                  key={index}
+                  className="rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-800"
                 >
-                  {donateLink.startsWith('http') ? donateLink : `https://www.arqum.org${donateLink}`}
-                </Link>
-              </li>
-              <li className="flex flex-col gap-1 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
-                <span className="font-semibold text-gray-900">MOHID link:</span>
-                <Link
-                  href={mohidLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="break-all text-sky-700 underline underline-offset-2"
-                >
-                  {mohidLink}
-                </Link>
-              </li>
-            </ul>
-            <p className="mt-4 text-xs uppercase tracking-[0.2em] text-gray-500">
-              {mailingListNote}
-            </p>
-          </div>
+                  {item}
+                </span>
+              ))}
+            </div>
+          )}
 
-          <form
-            id="apply-membership-form"
-            onSubmit={handleFormSubmit}
-            className="mt-6 space-y-5 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm"
-          >
+          {(instructions.length > 0 || donateLink || mohidLink || mailingListNote) && (
+            <div className="mt-6 rounded-2xl border border-sky-100 bg-linear-to-br from-white to-sky-50 p-5">
+              {instructions.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">
+                    Instructions
+                  </p>
+                  <ul className="mt-3 space-y-3 text-sm text-gray-700">
+                    {instructions.map((step, index) => (
+                      <li key={index} className="flex items-start gap-2">
+                        <span className="mt-1 h-1.5 w-1.5 rounded-full bg-sky-600" />
+                        <div 
+                          className="prose prose-sm max-w-none [&_*]:max-w-full [&_strong]:font-semibold [&_em]:italic [&_a]:text-sky-700 [&_a]:underline"
+                          dangerouslySetInnerHTML={{ __html: step || '' }}
+                        />
+                      </li>
+                    ))}
+                    {donateLink && (
+                      <li className="flex flex-col gap-1 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
+                        <span className="font-semibold text-gray-900">Online link:</span>
+                        <Link
+                          href={donateLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="break-all text-sky-700 underline underline-offset-2"
+                        >
+                          {donateLink.startsWith('http') ? donateLink : `https://www.arqum.org${donateLink}`}
+                        </Link>
+                      </li>
+                    )}
+                    {mohidLink && (
+                      <li className="flex flex-col gap-1 rounded-xl bg-gray-50 p-3 text-sm text-gray-700">
+                        <span className="font-semibold text-gray-900">MOHID link:</span>
+                        <Link
+                          href={mohidLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="break-all text-sky-700 underline underline-offset-2"
+                        >
+                          {mohidLink}
+                        </Link>
+                      </li>
+                    )}
+                  </ul>
+                </>
+              )}
+              {mailingListNote && (
+                <p className="mt-4 text-xs uppercase tracking-[0.2em] text-gray-500">
+                  {mailingListNote}
+                </p>
+              )}
+            </div>
+          )}
+
+              <form
+                id="apply-membership-form"
+                onSubmit={handleFormSubmit}
+                className="mt-6 space-y-5 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm"
+              >
             <div className="space-y-2">
               <label htmlFor="full-name" className="text-sm font-semibold text-gray-900">
                 Full Name <span className="text-rose-600">*</span>
@@ -502,8 +497,9 @@ export default function ApplyMembershipDrawer({
                 </label>
               </div>
             </fieldset>
-
-          </form>
+              </form>
+            </>
+          )}
         </div>
         <div className="border-t border-gray-200 bg-white px-6 py-4">
           <button

@@ -82,29 +82,6 @@ interface ContactDrawerProps {
   methods?: Array<{ label: string; href: string; external?: boolean; display?: string }> | null;
 }
 
-const DEFAULT_CONTACT_METHODS = [
-  {
-    label: "Facebook",
-    href: "https://www.facebook.com/DAIC.Ames/",
-    external: true,
-  },
-  {
-    label: "WhatsApp",
-    href: "https://wa.me/?phone=15152923683",
-    external: true,
-  },
-  {
-    label: "Email",
-    href: "mailto:info@arqum.org",
-    external: false,
-  },
-  {
-    label: "Voicemail",
-    href: "tel:15152923683",
-    external: false,
-    display: "(515) 292-3683",
-  },
-];
 
 export default function ContactDrawer({
   isOpen,
@@ -112,87 +89,72 @@ export default function ContactDrawer({
   header,
   methods,
 }: ContactDrawerProps) {
-  // Initialize state from cache if available, otherwise use defaults
-  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(() => {
-    if (header) return null;
-    if (contactCache?.header?.data) {
-      const headerData = contactCache.header.data as any;
+  // Don't initialize with any data - wait for data from database
+  // Never use cache on initialization to avoid showing stale/static data
+  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(null);
+  const [localMethods, setLocalMethods] = useState<any[]>([]);
+  const [dataLoaded, setDataLoaded] = useState(false);
+
+  // Always fetch from database - only use real data from Supabase
+  const applySrcToState = (src: any) => {
+    if (!src) return;
+    
+    // Extract header
+    if (src?.header?.data) {
+      const headerData = src.header.data as any;
       const title = headerData['drawer-title'] || headerData.drawerTitle || undefined;
       const description = headerData['drawer-subtitle'] || headerData.drawerSubtitle || undefined;
-      return { title, description };
+      setLocalHeader({ title, description });
     }
-    return null;
-  });
-  
-  const [localMethods, setLocalMethods] = useState(() => {
-    if (methods) return DEFAULT_CONTACT_METHODS;
-    if (contactCache) {
-      const contentSection = contactCache?.content?.data || contactCache?.content || null;
-      if (contentSection) {
-        const methodsArr = [] as any[];
-        if (contentSection['contact-facebook']) methodsArr.push({ label: 'Facebook', href: contentSection['contact-facebook'], external: true });
-        if (contentSection['contact-whatsapp']) methodsArr.push({ label: 'WhatsApp', href: contentSection['contact-whatsapp'], external: true });
-        if (contentSection['contact-email']) methodsArr.push({ label: 'Email', href: `mailto:${contentSection['contact-email']}`, external: false });
-        if (contentSection['contact-voicemail']) methodsArr.push({ label: 'Voicemail', href: `tel:${contentSection['contact-voicemail'].replace(/[^0-9+]/g, '')}`, external: false, display: contentSection['contact-voicemail'] });
-        if (methodsArr.length > 0) return methodsArr;
-      }
+    
+    // Extract contact methods
+    const contentSection = src?.content?.data || src?.content || null;
+    if (contentSection) {
+      const methodsArr = [] as any[];
+      if (contentSection['contact-facebook']) methodsArr.push({ label: 'Facebook', href: contentSection['contact-facebook'], external: true });
+      if (contentSection['contact-whatsapp']) methodsArr.push({ label: 'WhatsApp', href: contentSection['contact-whatsapp'], external: true });
+      if (contentSection['contact-email']) methodsArr.push({ label: 'Email', href: `mailto:${contentSection['contact-email']}`, external: false });
+      if (contentSection['contact-voicemail']) methodsArr.push({ label: 'Voicemail', href: `tel:${contentSection['contact-voicemail'].replace(/[^0-9+]/g, '')}`, external: false, display: contentSection['contact-voicemail'] });
+      setLocalMethods(methodsArr);
     }
-    return DEFAULT_CONTACT_METHODS;
-  });
+    
+    setDataLoaded(true);
+  };
 
-  // Don't pre-fetch on mount - only fetch when drawer opens
-
-  // Update state when drawer opens or cache changes
+  // Set up subscription (only subscribe, don't fetch on mount)
   useEffect(() => {
-    if (header) return;
+    if (header || methods) return; // Skip if props are provided
 
     let mounted = true;
 
-    const applySrcToState = (src: any) => {
-      // Extract header - match ApplyMembershipDrawer pattern
-      if (src?.header?.data) {
-        const headerData = src.header.data as any;
-        const title = headerData['drawer-title'] || headerData.drawerTitle || undefined;
-        const description = headerData['drawer-subtitle'] || headerData.drawerSubtitle || undefined;
-        if (mounted) {
-          setLocalHeader({ title, description });
-        }
-      }
-      
-      if (mounted) {
-
-        const contentSection = src?.content?.data || src?.content || null;
-        if (contentSection) {
-          const methodsArr = [] as any[];
-          if (contentSection['contact-facebook']) methodsArr.push({ label: 'Facebook', href: contentSection['contact-facebook'], external: true });
-          if (contentSection['contact-whatsapp']) methodsArr.push({ label: 'WhatsApp', href: contentSection['contact-whatsapp'], external: true });
-          if (contentSection['contact-email']) methodsArr.push({ label: 'Email', href: `mailto:${contentSection['contact-email']}`, external: false });
-          if (contentSection['contact-voicemail']) methodsArr.push({ label: 'Voicemail', href: `tel:${contentSection['contact-voicemail'].replace(/[^0-9+]/g, '')}`, external: false, display: contentSection['contact-voicemail'] });
-          if (methodsArr.length > 0) setLocalMethods(methodsArr);
-        }
-      }
-    };
-
-    // Subscribe to cache updates so we update only when cache changes.
+    // Subscribe to cache updates so we update when cache changes (even when drawer is closed)
     const unsubscribe = subscribeToContactCache((data) => {
-      if (!data) return;
-      applySrcToState(data);
+      if (!mounted) return;
+      if (data) {
+        applySrcToState(data);
+      }
     });
 
-    // If drawer is open, populate immediately from cache (synchronously if available)
-    if (isOpen) {
-      // Check cache synchronously first for instant display
-      if (contactCache) {
-        applySrcToState(contactCache);
-      }
-      // Also fetch to ensure we have the latest data (will use cache if available)
-      fetchContactCached().then((data) => {
-        if (mounted && data) applySrcToState(data);
-      }).catch((err) => console.error('[ContactDrawer] fetchContactCached error:', err));
-    }
-
     return () => { mounted = false; unsubscribe(); };
-  }, [header, isOpen]);
+  }, [header, methods]);
+
+  // Always fetch fresh data when drawer opens
+  useEffect(() => {
+    if (!isOpen || header || methods) return; // Skip if props are provided
+    
+    let mounted = true;
+
+    // Always force fetch fresh data from database when drawer opens
+    fetchContactCached(true).then((data) => {
+      if (mounted && data) {
+        applySrcToState(data);
+      }
+    }).catch((err) => {
+      console.error('[ContactDrawer] fetchContactCached error:', err);
+    });
+
+    return () => { mounted = false; };
+  }, [isOpen, header, methods]);
 
   const effectiveHeader = header ?? localHeader;
   const effectiveMethods = methods ?? localMethods;
@@ -244,18 +206,16 @@ export default function ContactDrawer({
       >
         <header className="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
           <div className="max-w-xl">
-            <h2 id="contact-drawer-title" className="text-xl font-semibold tracking-tight">
-              {effectiveHeader?.title ?? "Fort Dodge Islamic Center - Contact Us"}
-            </h2>
-            {effectiveHeader?.description ? (
+            {effectiveHeader?.title && (
+              <h2 id="contact-drawer-title" className="text-xl font-semibold tracking-tight">
+                {effectiveHeader.title}
+              </h2>
+            )}
+            {effectiveHeader?.description && (
               <p 
                 className="mt-1 text-sm text-white/80"
                 dangerouslySetInnerHTML={{ __html: effectiveHeader.description }}
               />
-            ) : (
-              <p className="mt-1 text-sm text-white/80">
-                To serve you better, we suggest to use any of the different contact means we have available. But, we are happy to receive any anonymous queries or questions via this form.
-              </p>
             )}
           </div>
 
@@ -282,36 +242,43 @@ export default function ContactDrawer({
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 pb-7 pt-6">
-          <div className="space-y-6">
-            {/* Contact Methods Section */}
-            <div className="rounded-2xl border border-sky-100 bg-linear-to-br from-white to-sky-50 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500 mb-4">
-                Contact Methods
-              </p>
-              <div className="space-y-3">
-                {effectiveMethods.map((method) => (
-                  <div
-                    key={method.label}
-                    className="flex items-center justify-between rounded-xl bg-gray-50 p-3"
-                  >
-                    <span className="text-sm font-semibold text-gray-900">
-                      {method.label}:
-                    </span>
-                    <Link
-                      href={method.href}
-                      target={method.external ? "_blank" : undefined}
-                      rel={method.external ? "noreferrer" : undefined}
-                      className="break-all text-sm text-sky-700 underline underline-offset-2 hover:text-sky-900"
-                    >
-                      {method.display || method.href.replace(/^(mailto:|tel:)/, "")}
-                    </Link>
-                  </div>
-                ))}
-              </div>
+          {(!dataLoaded && !header && !methods) ? (
+            <div className="text-center py-8">
+              <p className="text-gray-600">Loading...</p>
             </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Contact Methods Section */}
+              {effectiveMethods.length > 0 && (
+                <div className="rounded-2xl border border-sky-100 bg-linear-to-br from-white to-sky-50 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500 mb-4">
+                    Contact Methods
+                  </p>
+                  <div className="space-y-3">
+                    {effectiveMethods.map((method, index) => (
+                      <div
+                        key={method.label || index}
+                        className="flex items-center justify-between rounded-xl bg-gray-50 p-3"
+                      >
+                        <span className="text-sm font-semibold text-gray-900">
+                          {method.label}:
+                        </span>
+                        <Link
+                          href={method.href}
+                          target={method.external ? "_blank" : undefined}
+                          rel={method.external ? "noreferrer" : undefined}
+                          className="break-all text-sm text-sky-700 underline underline-offset-2 hover:text-sky-900"
+                        >
+                          {method.display || method.href.replace(/^(mailto:|tel:)/, "")}
+                        </Link>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
-            {/* Form Section */}
-            <form
+              {/* Form Section */}
+              <form
               id="contact-form"
               onSubmit={handleFormSubmit}
               className="space-y-5 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm"
@@ -376,7 +343,8 @@ export default function ContactDrawer({
                 />
               </div>
             </form>
-          </div>
+            </div>
+          )}
         </div>
 
         <div className="border-t border-gray-200 bg-white px-6 py-4">

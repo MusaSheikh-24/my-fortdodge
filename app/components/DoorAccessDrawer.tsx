@@ -83,20 +83,6 @@ function subscribeToDoorAccessCache(cb: (data: any) => void) {
   };
 }
 
-// Default values as fallback
-const DEFAULT_POLICY_INTRO = [
-  "Fort Dodge Islamic Center is committed to the safety and security of its members. In line with this commitment, we are introducing a new door security policy. Starting 2/1/2024, The doors of the Islamic Center will be unlocked during regular prayer times (15 minutes before Athan and will remain open 15 minutes past Iqama), but access will be restricted at other times for enhanced security. To access the center's premises at other times, community members are required to sign up and obtain a unique access code.",
-  "Please complete the following form accurately and thoroughly to request your access code. Once your request is approved, you will receive a confirmation email containing your unique access code. This code will be necessary for entry into the Fort Dodge Islamic Center outside prayer times.",
-];
-
-const DEFAULT_POLICY_AGREEMENT = [
-  "I understand that the access code provided is for my personal use only.",
-  "I agree not to share my access code with anyone else.",
-  "I will promptly report any loss or compromise of my access code to the Fort Dodge Islamic Center management.",
-];
-
-const DEFAULT_POLICY_AGREEMENT_INTRO = "By submitting this form, I confirm that all the information provided is accurate and complete and I have read and agree to abide by the following Fort Dodge Islamic Center's door security policy:";
-const DEFAULT_MEMBERSHIP_DRAWER_LINK = "https://forms.gle/xtiX7nYHEWLfoEfy8";
 
 // Helper function to extract data from cache (no defaults - only returns what's in database)
 function extractDoorAccessData(src: any) {
@@ -152,22 +138,19 @@ export default function DoorAccessDrawer({
   onOpenMembershipDrawer,
   header,
 }: DoorAccessDrawerProps) {
-  // Don't initialize with defaults - wait for data from database
-  // Initialize from cache if available for instant display
-  const cachedData = doorAccessCache ? extractDoorAccessData(doorAccessCache) : null;
-  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(
-    cachedData?.header || null
-  );
+  // Don't initialize with any data - wait for data from database
+  // Never use cache on initialization to avoid showing stale/static data
+  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(null);
   const [policyIntro, setPolicyIntro] = useState<string[]>([]);
   const [policyAgreement, setPolicyAgreement] = useState<string[]>([]);
   const [policyAgreementIntro, setPolicyAgreementIntro] = useState<string>("");
   const [membershipDrawerLink, setMembershipDrawerLink] = useState<string>("");
   const [dataLoaded, setDataLoaded] = useState(false);
 
-  // Always fetch from database - never use static defaults
-  const applySrcToState = (src: any, useDefaults: boolean = false) => {
-    if (!src && !useDefaults) return;
-    const extracted = extractDoorAccessData(src || null);
+  // Always fetch from database - only use real data from Supabase
+  const applySrcToState = (src: any) => {
+    if (!src) return;
+    const extracted = extractDoorAccessData(src);
     
     // Always update header from database
     console.log('[DoorAccessDrawer] Updating header:', { 
@@ -178,10 +161,10 @@ export default function DoorAccessDrawer({
     
     // Update header state - always set to extracted value (even if null)
     setLocalHeader(extracted.header);
-    setPolicyIntro(extracted.policyIntro.length > 0 ? extracted.policyIntro : (useDefaults ? DEFAULT_POLICY_INTRO : []));
-    setPolicyAgreement(extracted.policyAgreement.length > 0 ? extracted.policyAgreement : (useDefaults ? DEFAULT_POLICY_AGREEMENT : []));
-    setPolicyAgreementIntro(extracted.policyAgreementIntro || (useDefaults ? DEFAULT_POLICY_AGREEMENT_INTRO : ""));
-    setMembershipDrawerLink(extracted.membershipDrawerLink || (useDefaults ? DEFAULT_MEMBERSHIP_DRAWER_LINK : ""));
+    setPolicyIntro(extracted.policyIntro);
+    setPolicyAgreement(extracted.policyAgreement);
+    setPolicyAgreementIntro(extracted.policyAgreementIntro);
+    setMembershipDrawerLink(extracted.membershipDrawerLink);
     setDataLoaded(true);
   };
 
@@ -193,7 +176,7 @@ export default function DoorAccessDrawer({
     const unsubscribe = subscribeToDoorAccessCache((data) => {
       if (!mounted) return;
       if (data) {
-        applySrcToState(data, false);
+        applySrcToState(data);
       }
     });
 
@@ -208,31 +191,25 @@ export default function DoorAccessDrawer({
 
     // Always force fetch fresh data from database when drawer opens
     fetchDoorAccessCached(true).then((data) => {
-      if (mounted) {
-        if (data) {
-          applySrcToState(data, false);
-        } else {
-          applySrcToState(null, true);
-        }
+      if (mounted && data) {
+        applySrcToState(data);
       }
     }).catch((err) => {
       console.error('[DoorAccessDrawer] fetchDoorAccessCached error:', err);
-      if (mounted) {
-        applySrcToState(null, true);
-      }
     });
 
     return () => { mounted = false; };
   }, [isOpen]);
 
-  // Always use localHeader from database if available, only fallback to header prop if localHeader is null
-  const effectiveHeader = localHeader || header;
+  // Only use localHeader from Supabase - ignore header prop to avoid showing static data
+  // Only show header when data is loaded from Supabase
+  const effectiveHeader = dataLoaded ? localHeader : null;
   
-  // Use defaults only if no data loaded and API failed/returned empty
-  const displayPolicyIntro = dataLoaded ? (policyIntro.length > 0 ? policyIntro : DEFAULT_POLICY_INTRO) : (policyIntro.length > 0 ? policyIntro : []);
-  const displayPolicyAgreement = dataLoaded ? (policyAgreement.length > 0 ? policyAgreement : DEFAULT_POLICY_AGREEMENT) : (policyAgreement.length > 0 ? policyAgreement : []);
-  const displayPolicyAgreementIntro = policyAgreementIntro || DEFAULT_POLICY_AGREEMENT_INTRO;
-  const displayMembershipDrawerLink = membershipDrawerLink || DEFAULT_MEMBERSHIP_DRAWER_LINK;
+  // Only use real data from Supabase - no fallbacks
+  const displayPolicyIntro = policyIntro;
+  const displayPolicyAgreement = policyAgreement;
+  const displayPolicyAgreementIntro = policyAgreementIntro;
+  const displayMembershipDrawerLink = membershipDrawerLink;
   const handleFormSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -281,18 +258,16 @@ export default function DoorAccessDrawer({
       >
         <header className="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
           <div className="max-w-xl">
-            <h2 id="door-access-drawer-title" className="text-xl font-semibold tracking-tight">
-              {effectiveHeader?.title ?? "Fort Dodge Islamic Center Door Security Access Code Request Form"}
-            </h2>
-            {effectiveHeader?.description ? (
+            {effectiveHeader?.title && (
+              <h2 id="door-access-drawer-title" className="text-xl font-semibold tracking-tight">
+                {effectiveHeader.title}
+              </h2>
+            )}
+            {effectiveHeader?.description && (
               <p 
                 className="mt-1 text-sm text-white/80"
                 dangerouslySetInnerHTML={{ __html: effectiveHeader.description }}
               />
-            ) : (
-              <p className="mt-1 text-sm text-white/80">
-                Request your unique access code for entry outside regular prayer times.
-              </p>
             )}
           </div>
 
@@ -319,7 +294,7 @@ export default function DoorAccessDrawer({
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 pb-7 pt-6">
-          {!dataLoaded && displayPolicyIntro.length === 0 ? (
+          {!dataLoaded ? (
             <div className="text-center py-8">
               <p className="text-gray-600">Loading...</p>
             </div>

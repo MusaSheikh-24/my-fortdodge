@@ -82,40 +82,9 @@ function subscribeToFinancialCache(cb: (data: any) => void) {
   };
 }
 
-// Default values as fallback
-const DEFAULT_OVERVIEW = [
-  "The aim of the financial assistance program is to provide short-term financial aid to community members experiencing hardship. This support is made possible through Zakat, Sadaqa, and Fitra contributions.",
-];
-
-const DEFAULT_HOW_TO_APPLY = [
-  {
-    title: "Online Application",
-    description:
-      "The fastest and most convenient method is to complete the Google Form linked below.",
-  },
-  {
-    title: "Printable Application (optional)",
-    description:
-      "Download the latest application from our website, fill it out, and return it using any of the options below:",
-    bullets: [
-      "Place the completed form in the donation box located in the prayer hall.",
-      "Email the completed form to treasurer@arqum.org.",
-    ],
-  },
-  {
-    title: "Supporting Documents",
-    description:
-      "Please include recent documents such as bank statements and receipts. These can be scanned and emailed to treasurer@arqum.org.",
-  },
-];
-
 const maritalStatusOptions = ["Married", "Single", "Divorced", "Widowed"];
 
 const frequencyScale = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
-
-const DEFAULT_FINANCIAL_FORM_URL = "https://forms.gle/financial-assistance";
-const DEFAULT_HELP_EMAIL = "treasurer@arqum.org";
-const DEFAULT_WEBSITE_URL = "https://arqum.org";
 
 // Helper function to extract data from cache (no defaults - only returns what's in database)
 function extractFinancialData(src: any) {
@@ -191,12 +160,9 @@ export default function FinancialDrawer({
   onClose,
   header,
 }: FinancialDrawerProps) {
-  // Don't initialize with defaults - wait for data from database
-  // Initialize from cache if available for instant display
-  const cachedData = financialCache ? extractFinancialData(financialCache) : null;
-  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(
-    cachedData?.header || null
-  );
+  // Don't initialize with any data - wait for data from database
+  // Never use cache on initialization to avoid showing stale/static data
+  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(null);
   const [overview, setOverview] = useState<string[]>([]);
   const [howToApply, setHowToApply] = useState<any[]>([]);
   const [financialFormUrl, setFinancialFormUrl] = useState<string>("");
@@ -204,10 +170,10 @@ export default function FinancialDrawer({
   const [websiteUrl, setWebsiteUrl] = useState<string>("");
   const [dataLoaded, setDataLoaded] = useState(false);
 
-  // Always fetch from database - never use static defaults
-  const applySrcToState = (src: any, useDefaults: boolean = false) => {
-    if (!src && !useDefaults) return;
-    const extracted = extractFinancialData(src || null);
+  // Always fetch from database - only use real data from Supabase
+  const applySrcToState = (src: any) => {
+    if (!src) return;
+    const extracted = extractFinancialData(src);
     
     // Always update header from database
     console.log('[FinancialDrawer] Updating header:', { 
@@ -218,11 +184,11 @@ export default function FinancialDrawer({
     
     // Update header state - always set to extracted value (even if null)
     setLocalHeader(extracted.header);
-    setOverview(extracted.overview.length > 0 ? extracted.overview : (useDefaults ? DEFAULT_OVERVIEW : []));
-    setHowToApply(extracted.howToApply.length > 0 ? extracted.howToApply : (useDefaults ? DEFAULT_HOW_TO_APPLY : []));
-    setFinancialFormUrl(extracted.financialFormUrl || (useDefaults ? DEFAULT_FINANCIAL_FORM_URL : ""));
-    setHelpEmail(extracted.helpEmail || (useDefaults ? DEFAULT_HELP_EMAIL : ""));
-    setWebsiteUrl(extracted.websiteUrl || (useDefaults ? DEFAULT_WEBSITE_URL : ""));
+    setOverview(extracted.overview);
+    setHowToApply(extracted.howToApply);
+    setFinancialFormUrl(extracted.financialFormUrl);
+    setHelpEmail(extracted.helpEmail);
+    setWebsiteUrl(extracted.websiteUrl);
     setDataLoaded(true);
   };
 
@@ -234,7 +200,7 @@ export default function FinancialDrawer({
     const unsubscribe = subscribeToFinancialCache((data) => {
       if (!mounted) return;
       if (data) {
-        applySrcToState(data, false);
+        applySrcToState(data);
       }
     });
 
@@ -249,32 +215,26 @@ export default function FinancialDrawer({
 
     // Always force fetch fresh data from database when drawer opens
     fetchFinancialCached(true).then((data) => {
-      if (mounted) {
-        if (data) {
-          applySrcToState(data, false);
-        } else {
-          applySrcToState(null, true);
-        }
+      if (mounted && data) {
+        applySrcToState(data);
       }
     }).catch((err) => {
       console.error('[FinancialDrawer] fetchFinancialCached error:', err);
-      if (mounted) {
-        applySrcToState(null, true);
-      }
     });
 
     return () => { mounted = false; };
   }, [isOpen]);
 
-  // Always use localHeader from database if available, only fallback to header prop if localHeader is null
-  const effectiveHeader = localHeader || header;
+  // Only use localHeader from Supabase - ignore header prop to avoid showing static data
+  // Only show header when data is loaded from Supabase
+  const effectiveHeader = dataLoaded ? localHeader : null;
   
-  // Use defaults only if no data loaded and API failed/returned empty
-  const displayOverview = dataLoaded ? (overview.length > 0 ? overview : DEFAULT_OVERVIEW) : (overview.length > 0 ? overview : []);
-  const displayHowToApply = dataLoaded ? (howToApply.length > 0 ? howToApply : DEFAULT_HOW_TO_APPLY) : (howToApply.length > 0 ? howToApply : []);
-  const displayFinancialFormUrl = financialFormUrl || DEFAULT_FINANCIAL_FORM_URL;
-  const displayHelpEmail = helpEmail || DEFAULT_HELP_EMAIL;
-  const displayWebsiteUrl = websiteUrl || DEFAULT_WEBSITE_URL;
+  // Only use real data from Supabase - no fallbacks
+  const displayOverview = overview;
+  const displayHowToApply = howToApply;
+  const displayFinancialFormUrl = financialFormUrl;
+  const displayHelpEmail = helpEmail;
+  const displayWebsiteUrl = websiteUrl;
   
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -324,18 +284,16 @@ export default function FinancialDrawer({
       >
         <header className="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
           <div className="max-w-xl">
-            <h2 id="financial-drawer-title" className="text-xl font-semibold tracking-tight">
-              {effectiveHeader?.title ?? "Fort Dodge Islamic Center Financial Assistance Form"}
-            </h2>
-            {effectiveHeader?.description ? (
+            {effectiveHeader?.title && (
+              <h2 id="financial-drawer-title" className="text-xl font-semibold tracking-tight">
+                {effectiveHeader.title}
+              </h2>
+            )}
+            {effectiveHeader?.description && (
               <p 
                 className="mt-1 text-sm text-white/80"
                 dangerouslySetInnerHTML={{ __html: effectiveHeader.description }}
               />
-            ) : (
-              <p className="mt-1 text-sm text-white/80">
-                Share your information below. You will finish the official Google Form in the next step.
-              </p>
             )}
           </div>
 
@@ -362,7 +320,7 @@ export default function FinancialDrawer({
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 pb-7 pt-6">
-          {!dataLoaded && displayOverview.length === 0 ? (
+          {!dataLoaded ? (
             <div className="text-center py-8">
               <p className="text-gray-600">Loading...</p>
             </div>
@@ -408,20 +366,26 @@ export default function FinancialDrawer({
                     </div>
                   ))}
                 </div>
-                <p className="mt-4 text-xs uppercase tracking-[0.2em] text-gray-500">
-                  For help, email{" "}
-                  <Link
-                    href={`mailto:${displayHelpEmail}`}
-                    className="text-sky-700 underline underline-offset-2"
-                  >
-                    {displayHelpEmail}
-                  </Link>{" "}
-                  or visit our{" "}
-                  <Link href={displayWebsiteUrl} className="text-sky-700 underline underline-offset-2">
-                    website
-                  </Link>
-                  . Your privacy will be respected at every step.
-                </p>
+                {displayHelpEmail && (
+                  <p className="mt-4 text-xs uppercase tracking-[0.2em] text-gray-500">
+                    For help, email{" "}
+                    <Link
+                      href={`mailto:${displayHelpEmail}`}
+                      className="text-sky-700 underline underline-offset-2"
+                    >
+                      {displayHelpEmail}
+                    </Link>
+                    {displayWebsiteUrl && (
+                      <>
+                        {" "}or visit our{" "}
+                        <Link href={displayWebsiteUrl} className="text-sky-700 underline underline-offset-2">
+                          website
+                        </Link>
+                      </>
+                    )}
+                    . Your privacy will be respected at every step.
+                  </p>
+                )}
               </div>
             </>
           )}

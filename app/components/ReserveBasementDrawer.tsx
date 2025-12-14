@@ -82,62 +82,6 @@ function subscribeToReserveBasementCache(cb: (data: any) => void) {
   };
 }
 
-// Default values as fallback
-const DEFAULT_INTRO_COPY = [
-  "This form is intended for members and affiliates of Fort Dodge Islamic Center seeking to reserve the basement space for various activities and events. Our basement is a versatile space, ideal for gatherings, educational sessions, community events, and more. Please fill out this form to begin the reservation process. All requests are subject to review based on our policy guidelines and availability.",
-  "Note: Please allow at least 2 days for us to process your request. We do not guarantee same-day reservations, so plan in advance.",
-];
-
-const DEFAULT_CONTACT_DETAILS = [
-  { label: "Phone", value: "(515) 528-3618", href: "tel:15155283618" },
-  { label: "Email", value: "info@arqum.org", href: "mailto:info@arqum.org" },
-];
-
-const DEFAULT_POLICY_ITEMS = [
-  {
-    title: "1. Safety First:",
-    description:
-      "The safety of our community is our top priority. The basement contains electrical components and utility rooms, which can be hazardous, especially to children. It is imperative that these areas are treated with caution.",
-  },
-  {
-    title: "2. Adult Supervision Required for Children:",
-    description:
-      "Children are welcome to participate in activities held in the basement; however, they must be under adult supervision at all times. Unscheduled, unsupervised access by children to the basement is strictly prohibited to prevent accidents.",
-  },
-  {
-    title: "3. Prioritizing Space for Community Activities:",
-    description:
-      "While we understand the need for recreational space for children, the primary purpose of the basement is to serve as an additional space for community activities, educational purposes, and events. Therefore, reservation requests will be prioritized based on these needs.",
-  },
-  {
-    title: "4. Respect for the Space:",
-    description:
-      "All users of the basement are expected to respect the space. This includes maintaining cleanliness, ensuring all equipment and facilities are used appropriately, and leaving the space in the same condition as it was found.",
-  },
-  {
-    title: "5. Compliance with Islamic Center Rules and Regulations:",
-    description:
-      "All activities in the basement must adhere to the overall rules and guidelines of the Fort Dodge Islamic Center. Any activities contrary to these guidelines will not be permitted.",
-  },
-  {
-    title: "6. Reservation Review and Confirmation:",
-    description:
-      "Submission of this form does not guarantee a reservation. All requests will be reviewed. We will contact you via email communications as soon as possible to confirm availability. Please wait for our confirmation before proceeding with arrangements.",
-  },
-  {
-    title: "7. Cleaning:",
-    description:
-      "The reservation holder will be responsible to clean and remove trash from the basement after the reservation ends. They will also vacuum and return everything as it was before the reservation.",
-  },
-  {
-    title: "8. Community Use:",
-    description:
-      "The basement is intended for community use and a safe, respectful, and beneficial use of the basement space for our community.",
-  },
-];
-
-const DEFAULT_RESERVATION_FORM_URL = "https://forms.gle/ReserveBasementForm";
-const DEFAULT_POLICY_TITLE = "Basement Usage Policy";
 
 // Helper function to extract data from cache (no defaults - only returns what's in database)
 function extractReserveBasementData(src: any) {
@@ -218,12 +162,9 @@ export default function ReserveBasementDrawer({
   onClose,
   header,
 }: ReserveBasementDrawerProps) {
-  // Don't initialize with defaults - wait for data from database
-  // Initialize from cache if available for instant display
-  const cachedData = reserveBasementCache ? extractReserveBasementData(reserveBasementCache) : null;
-  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(
-    cachedData?.header || null
-  );
+  // Don't initialize with any data - wait for data from database
+  // Never use cache on initialization to avoid showing stale/static data
+  const [localHeader, setLocalHeader] = useState<{ title?: string; description?: string } | null>(null);
   const [introCopy, setIntroCopy] = useState<string[]>([]);
   const [contactDetails, setContactDetails] = useState<any[]>([]);
   const [policyTitle, setPolicyTitle] = useState<string>("");
@@ -231,10 +172,10 @@ export default function ReserveBasementDrawer({
   const [reservationFormUrl, setReservationFormUrl] = useState<string>("");
   const [dataLoaded, setDataLoaded] = useState(false);
 
-  // Always fetch from database - never use static defaults
-  const applySrcToState = (src: any, useDefaults: boolean = false) => {
-    if (!src && !useDefaults) return;
-    const extracted = extractReserveBasementData(src || null);
+  // Always fetch from database - only use real data from Supabase
+  const applySrcToState = (src: any) => {
+    if (!src) return;
+    const extracted = extractReserveBasementData(src);
     
     // Always update header from database
     console.log('[ReserveBasementDrawer] Updating header:', { 
@@ -245,11 +186,11 @@ export default function ReserveBasementDrawer({
     
     // Update header state - always set to extracted value (even if null)
     setLocalHeader(extracted.header);
-    setIntroCopy(extracted.introCopy.length > 0 ? extracted.introCopy : (useDefaults ? DEFAULT_INTRO_COPY : []));
-    setContactDetails(extracted.contactDetails.length > 0 ? extracted.contactDetails : (useDefaults ? DEFAULT_CONTACT_DETAILS : []));
-    setPolicyTitle(extracted.policyTitle || (useDefaults ? DEFAULT_POLICY_TITLE : ""));
-    setPolicyItems(extracted.policyItems.length > 0 ? extracted.policyItems : (useDefaults ? DEFAULT_POLICY_ITEMS : []));
-    setReservationFormUrl(extracted.reservationFormUrl || (useDefaults ? DEFAULT_RESERVATION_FORM_URL : ""));
+    setIntroCopy(extracted.introCopy);
+    setContactDetails(extracted.contactDetails);
+    setPolicyTitle(extracted.policyTitle);
+    setPolicyItems(extracted.policyItems);
+    setReservationFormUrl(extracted.reservationFormUrl);
     setDataLoaded(true);
   };
 
@@ -261,7 +202,7 @@ export default function ReserveBasementDrawer({
     const unsubscribe = subscribeToReserveBasementCache((data) => {
       if (!mounted) return;
       if (data) {
-        applySrcToState(data, false);
+        applySrcToState(data);
       }
     });
 
@@ -276,32 +217,26 @@ export default function ReserveBasementDrawer({
 
     // Always force fetch fresh data from database when drawer opens
     fetchReserveBasementCached(true).then((data) => {
-      if (mounted) {
-        if (data) {
-          applySrcToState(data, false);
-        } else {
-          applySrcToState(null, true);
-        }
+      if (mounted && data) {
+        applySrcToState(data);
       }
     }).catch((err) => {
       console.error('[ReserveBasementDrawer] fetchReserveBasementCached error:', err);
-      if (mounted) {
-        applySrcToState(null, true);
-      }
     });
 
     return () => { mounted = false; };
   }, [isOpen]);
 
-  // Always use localHeader from database if available, only fallback to header prop if localHeader is null
-  const effectiveHeader = localHeader || header;
+  // Only use localHeader from Supabase - ignore header prop to avoid showing static data
+  // Only show header when data is loaded from Supabase
+  const effectiveHeader = dataLoaded ? localHeader : null;
   
-  // Use defaults only if no data loaded and API failed/returned empty
-  const displayIntroCopy = dataLoaded ? (introCopy.length > 0 ? introCopy : DEFAULT_INTRO_COPY) : (introCopy.length > 0 ? introCopy : []);
-  const displayContactDetails = contactDetails.length > 0 ? contactDetails : DEFAULT_CONTACT_DETAILS;
-  const displayPolicyTitle = policyTitle || DEFAULT_POLICY_TITLE;
-  const displayPolicyItems = policyItems.length > 0 ? policyItems : DEFAULT_POLICY_ITEMS;
-  const displayReservationFormUrl = reservationFormUrl || DEFAULT_RESERVATION_FORM_URL;
+  // Only use real data from Supabase - no fallbacks
+  const displayIntroCopy = introCopy;
+  const displayContactDetails = contactDetails;
+  const displayPolicyTitle = policyTitle;
+  const displayPolicyItems = policyItems;
+  const displayReservationFormUrl = reservationFormUrl;
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -350,18 +285,16 @@ export default function ReserveBasementDrawer({
       >
         <header className="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-slate-900 to-sky-900 px-6 py-5 text-white">
           <div className="max-w-xl">
-            <h2 id="reserve-basement-title" className="text-xl font-semibold tracking-tight">
-              {effectiveHeader?.title ?? "Fort Dodge Islamic Center Basement Reservation Form"}
-            </h2>
-            {effectiveHeader?.description ? (
+            {effectiveHeader?.title && (
+              <h2 id="reserve-basement-title" className="text-xl font-semibold tracking-tight">
+                {effectiveHeader.title}
+              </h2>
+            )}
+            {effectiveHeader?.description && (
               <p 
                 className="mt-1 text-sm text-white/80"
                 dangerouslySetInnerHTML={{ __html: effectiveHeader.description }}
               />
-            ) : (
-              <p className="mt-1 text-sm text-white/80">
-                Provide your event details to request basement usage for classes, gatherings, or community events.
-              </p>
             )}
           </div>
 
@@ -388,7 +321,7 @@ export default function ReserveBasementDrawer({
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 pb-7 pt-6">
-          {!dataLoaded && displayIntroCopy.length === 0 ? (
+          {!dataLoaded ? (
             <div className="text-center py-8">
               <p className="text-gray-600">Loading...</p>
             </div>
@@ -427,10 +360,11 @@ export default function ReserveBasementDrawer({
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl border border-gray-100 bg-linear-to-br from-white to-slate-50 p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">
-                  {displayPolicyTitle}
-                </p>
+              {displayPolicyTitle && (
+                <div className="mt-6 rounded-2xl border border-gray-100 bg-linear-to-br from-white to-slate-50 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-gray-500">
+                    {displayPolicyTitle}
+                  </p>
                 <ol className="mt-3 space-y-3 text-sm text-gray-700">
                   {displayPolicyItems.length > 0 ? (
                     displayPolicyItems.map((item, index) => (
@@ -450,7 +384,8 @@ export default function ReserveBasementDrawer({
                     <li className="text-sm text-gray-500 italic">No policy items available.</li>
                   )}
                 </ol>
-              </div>
+                </div>
+              )}
 
           <form
             id="reserve-basement-form"
